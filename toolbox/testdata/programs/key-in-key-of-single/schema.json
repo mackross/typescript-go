@@ -1,0 +1,25 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false,
+    "type": "object",
+    "properties": {
+        "utilKey": {
+            "type": "object",
+            "additionalProperties": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                    "utilDeepKey": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "utilDeepKey"
+                ]
+            }
+        }
+    },
+    "required": [
+        "utilKey"
+    ]
+}

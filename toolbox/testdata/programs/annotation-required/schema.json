@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "MyDefaultObject": {
+      "additionalProperties": false,
+      "properties": {
+        "age": {
+          "type": "number"
+        },
+        "free": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": ["age", "name"],
+      "type": "object"
+    },
+    "MySubObject": {
+      "additionalProperties": false,
+      "properties": {
+        "bool": {
+          "type": "boolean"
+        },
+        "object": {
+          "additionalProperties": true,
+          "properties": {},
+          "type": "object"
+        },
+        "string": {
+          "type": "string"
+        },
+        "subObject": {
+          "$ref": "#/definitions/MySubObject2",
+          "examples": [
+            {
+              "bool": true,
+              "object": {
+                "prop": 1
+              },
+              "string": "string"
+            }
+          ]
+        }
+      },
+      "required": ["bool", "object", "string"],
+      "type": "object"
+    },
+    "MySubObject2": {
+      "additionalProperties": false,
+      "properties": {
+        "bool": {
+          "type": "boolean"
+        },
+        "object": {
+          "additionalProperties": true,
+          "properties": {},
+          "type": "object"
+        },
+        "string": {
+          "type": "string"
+        }
+      },
+      "required": ["bool", "object", "string"],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "defaultObject": {
+      "$ref": "#/definitions/MyDefaultObject",
+      "examples": [
+        {
+          "age": 30,
+          "free": true,
+          "name": "me"
+        }
+      ]
+    },
+    "filled": {
+      "$ref": "#/definitions/MySubObject",
+      "examples": [
+        {
+          "bool": true,
+          "object": {},
+          "string": "string"
+        }
+      ]
+    }
+  },
+  "required": ["defaultObject", "filled"],
+  "type": "object"
+}
