@@ -3,9 +3,11 @@ package toolbox
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"strings"
+	"sync/atomic"
 
 	"github.com/microsoft/typescript-go/internal/ast"
 	"github.com/microsoft/typescript-go/internal/bundled"
@@ -30,12 +32,36 @@ type Diagnostic struct {
 	End     int
 }
 
-func Check(ctx context.Context, input CheckInput) ([]Diagnostic, error) {
+// CheckSession holds a reusable LSP session for incremental type-checking.
+// Create one via Check with a nil session, then pass it back on subsequent
+// calls to reuse the parsed program state. Call Close when done.
+type CheckSession struct {
+	session          *project.Session
+	entryURI         lsproto.DocumentUri
+	entryPath        string
+	currentDirectory string
+	version          atomic.Int32
+}
+
+func (cs *CheckSession) Close() error {
+	if cs.session != nil {
+		cs.session.Close()
+	}
+	return nil
+}
+
+// Verify CheckSession implements io.Closer.
+var _ io.Closer = (*CheckSession)(nil)
+
+// Check type-checks the entry file. If session is nil a new one is created.
+// The returned CheckSession can be passed to subsequent calls to avoid
+// re-parsing unchanged source files. The caller must Close the session.
+func Check(ctx context.Context, input CheckInput, session *CheckSession) ([]Diagnostic, *CheckSession, error) {
 	if input.Files == nil {
-		return nil, fmt.Errorf("toolbox: files are required")
+		return nil, session, fmt.Errorf("toolbox: files are required")
 	}
 	if input.Entry == "" {
-		return nil, fmt.Errorf("toolbox: entry is required")
+		return nil, session, fmt.Errorf("toolbox: entry is required")
 	}
 
 	currentDirectory := input.CurrentDirectory
@@ -43,13 +69,43 @@ func Check(ctx context.Context, input CheckInput) ([]Diagnostic, error) {
 		currentDirectory = "/"
 	}
 
+	entryPath := rootedPath(currentDirectory, input.Entry)
+
+	if session == nil {
+		s, err := newCheckSession(ctx, input, currentDirectory, entryPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		session = s
+	} else {
+		files, err := rootedFiles(input.Files, currentDirectory)
+		if err != nil {
+			return nil, session, err
+		}
+		entryContent, ok := files[entryPath]
+		if !ok {
+			return nil, session, fmt.Errorf("toolbox: entry %q not found", input.Entry)
+		}
+		version := session.version.Add(1)
+		session.session.DidChangeFile(ctx, session.entryURI, version, []lsproto.TextDocumentContentChangePartialOrWholeDocument{
+			{WholeDocument: &lsproto.TextDocumentContentChangeWholeDocument{Text: entryContent}},
+		})
+	}
+
+	diags, err := getDiagnostics(ctx, session)
+	if err != nil {
+		return nil, session, err
+	}
+	return diags, session, nil
+}
+
+func newCheckSession(ctx context.Context, input CheckInput, currentDirectory, entryPath string) (*CheckSession, error) {
 	files, err := rootedFiles(input.Files, currentDirectory)
 	if err != nil {
 		return nil, err
 	}
 	ensureDefaultTSConfig(files, currentDirectory)
 
-	entryPath := rootedPath(currentDirectory, input.Entry)
 	entryContent, ok := files[entryPath]
 	if !ok {
 		return nil, fmt.Errorf("toolbox: entry %q not found", input.Entry)
@@ -66,20 +122,30 @@ func Check(ctx context.Context, input CheckInput) ([]Diagnostic, error) {
 			LoggingEnabled:     false,
 		},
 	})
-	defer session.Close()
 
 	uri := lsproto.DocumentUri("file://" + entryPath)
 	session.DidOpenFile(ctx, uri, 1, entryContent, languageKind(entryPath))
 
-	languageService, err := session.GetLanguageService(ctx, uri)
+	cs := &CheckSession{
+		session:          session,
+		entryURI:         uri,
+		entryPath:        entryPath,
+		currentDirectory: currentDirectory,
+	}
+	cs.version.Store(1)
+	return cs, nil
+}
+
+func getDiagnostics(ctx context.Context, cs *CheckSession) ([]Diagnostic, error) {
+	languageService, err := cs.session.GetLanguageService(ctx, cs.entryURI)
 	if err != nil {
 		return nil, err
 	}
 
 	program := languageService.GetProgram()
-	file := program.GetSourceFile(entryPath)
+	file := program.GetSourceFile(cs.entryPath)
 	if file == nil {
-		return nil, fmt.Errorf("toolbox: source file %q not found in program", entryPath)
+		return nil, fmt.Errorf("toolbox: source file %q not found in program", cs.entryPath)
 	}
 
 	diagnostics := make([]*ast.Diagnostic, 0)
@@ -87,15 +153,15 @@ func Check(ctx context.Context, input CheckInput) ([]Diagnostic, error) {
 	diagnostics = append(diagnostics, program.GetSemanticDiagnostics(ctx, file)...)
 
 	out := make([]Diagnostic, 0, len(diagnostics))
-	for _, diagnostic := range diagnostics {
+	for _, d := range diagnostics {
 		item := Diagnostic{
-			Message: diagnostic.Localize(locale.Default),
-			Code:    diagnostic.Code(),
-			Pos:     diagnostic.Pos(),
-			End:     diagnostic.End(),
+			Message: d.Localize(locale.Default),
+			Code:    d.Code(),
+			Pos:     d.Pos(),
+			End:     d.End(),
 		}
-		if diagnostic.File() != nil {
-			item.File = diagnostic.File().FileName()
+		if d.File() != nil {
+			item.File = d.File().FileName()
 		}
 		out = append(out, item)
 	}
