@@ -23,6 +23,10 @@
         "length": {
           "type": "number"
         },
+        "name": {
+          "description": "Returns the name of the function. Function names are read-only and can not be changed.",
+          "type": "string"
+        },
         "prototype": {},
         "toString": {
           "description": "Returns a string representation of a function.",
@@ -36,6 +40,7 @@
         "call",
         "caller",
         "length",
+        "name",
         "prototype",
         "toString"
       ],

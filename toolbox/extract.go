@@ -66,7 +66,7 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 		files[configPath] = syntheticExtractTSConfig(sourceFiles)
 	}
 
-	vfs := vfstest.FromMap(files, input.UseCaseSensitiveFileNames)
+	vfs := bundled.WrapFS(vfstest.FromMap(files, input.UseCaseSensitiveFileNames))
 	host := compiler.NewCompilerHost(currentDirectory, vfs, bundled.LibPath(), nil, nil)
 
 	parsed, diags := tsoptions.GetParsedCommandLineOfConfigFile(configPath, &core.CompilerOptions{}, nil, host, nil)

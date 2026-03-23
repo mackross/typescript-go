@@ -143,7 +143,8 @@ func buildFixtureSpecs() map[string]FixtureSpec {
 	addDefaults("Object", "const-keyword")
 	addDefaults("foo.Bar", "custom-dates")
 	addDefaults("Enum", "enums-compiled-compute", "enums-number-initialized")
-	addDefaults("MyObject", "generic-recursive", "interface-recursion", "type-aliases", "type-aliases-partial", "type-aliases-local-namsepace", "type-aliases-local-namespace", "type-aliases-recursive-export", "type-aliases-recursive-object-topref", "type-aliases-mixed", "type-aliases-anonymous", "type-literals", "type-aliases-tuple", "type-aliases-tuple-of-variable-length", "type-aliases-tuple-with-names", "type-aliases-tuple-with-rest-element")
+	addDefaults("MyObject", "generic-recursive", "interface-recursion", "type-aliases", "type-aliases-partial", "type-aliases-local-namsepace", "type-aliases-local-namespace", "type-aliases-recursive-export", "type-aliases-recursive-object-topref", "type-aliases-mixed", "type-aliases-anonymous", "type-literals")
+	addDefaults("MyTuple", "type-aliases-tuple", "type-aliases-tuple-of-variable-length", "type-aliases-tuple-with-names", "type-aliases-tuple-with-rest-element")
 	addDefaults("MyObject", "const-as-enum")
 	addDefaults("MyObjectFromAbstract", "abstract-extends")
 	addDefaults("Main", "key-in-key-of-single", "key-in-key-of-multi", "key-in-key-of-multi-underscores")
@@ -172,7 +173,29 @@ func buildFixtureSpecs() map[string]FixtureSpec {
 	addDefaults("Test", "type-globalThis")
 	addDefaults("*", "generate-all-types", "type-default-number-as-integer", "user-symbols")
 
-	spec := defaultFixtureSpec("MyObject")
+	// type-function: expected has required but no additionalProperties
+	spec := FixtureSpec{
+		Root:    "MyObject",
+		Options: DefaultOptions(),
+	}
+	spec.Options.Required = true
+	specs["type-function"] = spec
+
+	// generic-hell: expected has required but no additionalProperties
+	spec = FixtureSpec{
+		Root:    "MyObject",
+		Options: DefaultOptions(),
+	}
+	spec.Options.Required = true
+	specs["generic-hell"] = spec
+
+	// interface-extra-props: expected wraps in $ref with string index sig
+	spec = defaultFixtureSpec("MyObject")
+	spec.Options.TopRef = true
+	spec.Options.NoExtraProps = false
+	specs["interface-extra-props"] = spec
+
+	spec = defaultFixtureSpec("MyObject")
 	spec.Options.ID = "someSchemaId"
 	specs["argument-id"] = spec
 
@@ -236,7 +259,11 @@ func buildFixtureSpecs() map[string]FixtureSpec {
 	spec.Options.AliasRef = true
 	specs["type-aliases-alias-ref"] = spec
 
-	spec = defaultFixtureSpec("MyAlias")
+	spec = FixtureSpec{
+		Root:    "MyAlias",
+		Options: DefaultOptions(),
+	}
+	spec.Options.Required = true
 	spec.Options.AliasRef = true
 	spec.Options.TopRef = true
 	specs["type-aliases-alias-ref-topref"] = spec
@@ -248,6 +275,10 @@ func buildFixtureSpecs() map[string]FixtureSpec {
 	specs["type-aliases-mixed"] = spec
 	specs["type-aliases-recursive-export"] = spec
 	specs["type-aliases-recursive-object-topref"] = spec
+
+	spec = defaultFixtureSpec("MyTuple")
+	spec.Options.AliasRef = true
+	spec.Options.TopRef = true
 	specs["type-aliases-tuple"] = spec
 
 	spec = defaultFixtureSpec("MyAlias")
@@ -270,7 +301,11 @@ func buildFixtureSpecs() map[string]FixtureSpec {
 	spec.Options.TopRef = true
 	specs["type-no-aliases-recursive-topref"] = spec
 
-	spec = defaultFixtureSpec("MyAlias")
+	spec = FixtureSpec{
+		Root:    "MyAlias",
+		Options: DefaultOptions(),
+	}
+	spec.Options.Required = true
 	spec.Options.AliasRef = true
 	spec.Options.TopRef = true
 	specs["type-aliases-recursive-alias-topref"] = spec
@@ -312,7 +347,10 @@ func buildFixtureSpecs() map[string]FixtureSpec {
 	spec.Options.ValidationKeywords = validationKeywords("chance", "important")
 	specs["user-validation-keywords"] = spec
 
-	spec = defaultFixtureSpec("*")
+	spec = FixtureSpec{
+		Root:    "*",
+		Options: DefaultOptions(),
+	}
 	spec.Options.DefaultNumberType = "integer"
 	specs["type-default-number-as-integer"] = spec
 
@@ -504,14 +542,14 @@ func buildProgramForFixture(fixture Fixture) (*compiler.Program, error) {
 	}
 
 	cwd := fixture.Path
-	fs := vfstest.FromMap(files, true)
+	fs := bundled.WrapFS(vfstest.FromMap(files, true))
 	host := compiler.NewCompilerHost(cwd, fs, bundled.LibPath(), nil, nil)
 
 	configPath := filepath.Join(cwd, "tsconfig.json")
 	if _, ok := files[configPath]; !ok && !fixture.Spec.UseConfig {
 		sourceFiles := sourceFilesForConfig(files, cwd)
 		files[configPath] = syntheticTSConfig(sourceFiles, fixture.Spec.Compiler)
-		fs = vfstest.FromMap(files, true)
+		fs = bundled.WrapFS(vfstest.FromMap(files, true))
 		host = compiler.NewCompilerHost(cwd, fs, bundled.LibPath(), nil, nil)
 	}
 
@@ -549,7 +587,71 @@ func readFixtureFiles(dir string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Scan .ts files for imports that reference sibling fixture directories
+	// (e.g. `from "../abstract-class/main"`) and include those files too.
+	readExtraDirs(dir, out)
 	return out, nil
+}
+
+// readExtraDirs scans .ts files for cross-directory imports and adds
+// referenced sibling fixture directories to the file map.
+func readExtraDirs(dir string, files map[string]string) {
+	seen := map[string]bool{}
+	for path, content := range files {
+		if !strings.HasSuffix(path, ".ts") {
+			continue
+		}
+		for _, line := range strings.Split(content, "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.Contains(line, "from") || !strings.Contains(line, "..") {
+				continue
+			}
+			// Match: import ... from "..." or import ... from '...'
+			idx := strings.Index(line, "from")
+			if idx < 0 {
+				continue
+			}
+			rest := strings.TrimSpace(line[idx+4:])
+			if len(rest) < 2 {
+				continue
+			}
+			q := rest[0]
+			if q != '\'' && q != '"' {
+				continue
+			}
+			end := strings.IndexByte(rest[1:], q)
+			if end < 0 {
+				continue
+			}
+			importPath := rest[1 : end+1]
+			if !strings.Contains(importPath, "..") {
+				continue
+			}
+			resolved := filepath.Clean(filepath.Join(filepath.Dir(path), importPath))
+			// Try with .ts extension
+			candidates := []string{resolved + ".ts", resolved + ".tsx", resolved + "/index.ts"}
+			for _, candidate := range candidates {
+				candidateDir := filepath.Dir(candidate)
+				if seen[candidateDir] {
+					continue
+				}
+				if _, err := os.Stat(candidate); err == nil {
+					seen[candidateDir] = true
+					_ = filepath.WalkDir(candidateDir, func(p string, d fs.DirEntry, walkErr error) error {
+						if walkErr != nil || d.IsDir() {
+							return walkErr
+						}
+						if _, exists := files[p]; !exists {
+							if content, err := os.ReadFile(p); err == nil {
+								files[p] = string(content)
+							}
+						}
+						return nil
+					})
+				}
+			}
+		}
+	}
 }
 
 func sourceFilesForConfig(files map[string]string, cwd string) []string {

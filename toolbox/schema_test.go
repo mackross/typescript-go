@@ -13,61 +13,7 @@ import (
 // knownFailingFixtures lists fixtures where the generator does not yet match
 // the expected schema.  These are skipped so CI stays green while the generator
 // is still being ported.  Remove entries as they are fixed.
-var knownFailingFixtures = map[string]bool{
-	"abstract-extends":                          true,
-	"annotation-required":                       true,
-	"comments":                                  true,
-	"comments-imports":                          true,
-	"const-as-enum":                             true,
-	"const-keyword":                             true,
-	"default-properties":                        true,
-	"force-type":                                true,
-	"force-type-imported":                       true,
-	"generic-hell":                              true,
-	"ignored-required":                          true,
-	"imports":                                   true,
-	"interface-extra-props":                     true,
-	"key-in-key-of-multi":                       true,
-	"key-in-key-of-multi-underscores":           true,
-	"key-in-key-of-single":                      true,
-	"module-interface-deep":                     true,
-	"module-interface-single":                   true,
-	"no-unrelated-definitions":                  true,
-	"numeric-keys-and-others":                   true,
-	"object-numeric-index":                      true,
-	"object-numeric-index-as-property":          true,
-	"prop-override":                             true,
-	"string-literals-inline":                    true,
-	"string-template-literal":                   true,
-	"symbol":                                    true,
-	"type-alias-schema-override":                true,
-	"type-aliases":                              true,
-	"type-aliases-alias-ref":                    true,
-	"type-aliases-alias-ref-topref":             true,
-	"type-aliases-anonymous":                    true,
-	"type-aliases-local-namespace":              true,
-	"type-aliases-local-namsepace":              true,
-	"type-aliases-mixed":                        true,
-	"type-aliases-multitype-array":              true,
-	"type-aliases-partial":                      true,
-	"type-aliases-recursive-alias-topref":       true,
-	"type-aliases-recursive-anonymous":          true,
-	"type-aliases-recursive-export":             true,
-	"type-aliases-recursive-object-topref":      true,
-	"type-aliases-tuple":                        true,
-	"type-aliases-tuple-of-variable-length":     true,
-	"type-aliases-tuple-with-names":             true,
-	"type-aliases-tuple-with-rest-element":      true,
-	"type-aliases-union":                        true,
-	"type-anonymous":                            true,
-	"type-default-number-as-integer":            true,
-	"type-function":                             true,
-	"type-intersection-recursive-no-additional": true,
-	"type-no-aliases-recursive-topref":          true,
-	"type-nullable":                             true,
-	"type-primitives":                           true,
-	"type-union-strict-null-keep-description":   true,
-}
+var knownFailingFixtures = map[string]bool{}
 
 func TestFixtureHarness(t *testing.T) {
 	fixtures, err := DiscoverFixtures("testdata/programs")
@@ -306,7 +252,7 @@ func canonicalizeJSONKey(key string, v any) any {
 		for i, e := range x {
 			out[i] = canonicalizeJSONKey("", e)
 		}
-		if key == "required" || key == "enum" || key == "type" {
+		if key == "required" || key == "enum" || key == "type" || key == "anyOf" || key == "oneOf" {
 			sort.Slice(out, func(i, j int) bool {
 				return jsonValueOrder(out[i]) < jsonValueOrder(out[j])
 			})

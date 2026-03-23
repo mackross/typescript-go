@@ -17,7 +17,7 @@
     },
     "properties": {
         "value": {
-            "$ref": "#/definitions/MyGeneric%3Cnumber%3E"
+            "$ref": "#/definitions/MyGeneric<number>"
         }
     },
     "required": [
