@@ -48,12 +48,11 @@ type Fixture struct {
 }
 
 type FixtureSpec struct {
-	Root          string
-	Options       Options
-	Compiler      FixtureCompilerOptions
-	UseConfig     bool
-	ProgramSchema bool
-	ExpectError   string
+	Root        string
+	Options     Options
+	Compiler    FixtureCompilerOptions
+	UseConfig   bool
+	ExpectError string
 }
 
 type FixtureCompilerOptions struct {
@@ -360,7 +359,6 @@ func buildFixtureSpecs() map[string]FixtureSpec {
 		UseConfig:   true,
 		ExpectError: "",
 	}
-	spec.ProgramSchema = true
 	specs["no-unrelated-definitions"] = spec
 
 	spec = FixtureSpec{
@@ -699,8 +697,4 @@ func syntheticTSConfig(files []string, opts FixtureCompilerOptions) string {
 	b.WriteString("\n  ]\n")
 	b.WriteString("}\n")
 	return b.String()
-}
-
-func normalizeOutputName(name string) string {
-	return strings.TrimSpace(name)
 }

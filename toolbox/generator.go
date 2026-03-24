@@ -91,6 +91,7 @@ func (g *Generator) Close() {
 		g.done()
 		g.done = nil
 	}
+	g.checker = nil
 }
 
 func (g *Generator) SetSchemaOverride(name string, schema Schema) {
@@ -2435,6 +2436,7 @@ func (g *Generator) reset() {
 	g.outputNameOwner = map[string]*ast.Symbol{}
 	g.anonInterfaceCounter = 0
 	g.aliasTargetSymbols = map[*ast.Symbol]bool{}
+	g.inConcreteContext = false
 }
 
 func (g *Generator) collectSymbols() {
