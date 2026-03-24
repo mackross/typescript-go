@@ -19,6 +19,14 @@ import (
 type ToolMetadata struct {
 	Description  string
 	ParamsSchema Schema
+	// ParamsTSType is the structured intermediate representation of the
+	// first parameter's type.  It is populated alongside ParamsSchema and
+	// can be manipulated (e.g. to splice in literal types for bound
+	// parameters) before being rendered to JSON Schema via TSTypeToJSON.
+	ParamsTSType *TSType
+	// FuncSig provides the full function signature as structured TSType
+	// nodes, including all parameters and their names.
+	FuncSig *TSFuncSig
 }
 
 type ExtractInput struct {
@@ -112,13 +120,25 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 	if len(signatures) > 0 {
 		sig := signatures[0]
 		params := sig.Parameters()
-		if len(params) > 0 {
-			paramType := ch.GetTypeOfSymbolAtLocation(params[0], sig.Declaration())
+
+		funcSig := &TSFuncSig{Description: meta.Description}
+		for _, param := range params {
+			paramType := ch.GetTypeOfSymbolAtLocation(param, sig.Declaration())
 			schema, err := gen.typeSchema(paramType, nil, sig.Declaration(), true)
 			if err != nil {
 				return nil, fmt.Errorf("toolbox: generate param schema: %w", err)
 			}
-			meta.ParamsSchema = schema
+			tsType := SchemaToTSType(schema)
+			funcSig.Params = append(funcSig.Params, TSFuncParam{
+				Name: param.Name,
+				Type: tsType,
+			})
+		}
+		meta.FuncSig = funcSig
+
+		if len(params) > 0 {
+			meta.ParamsSchema = TSTypeToJSON(funcSig.Params[0].Type)
+			meta.ParamsTSType = funcSig.Params[0].Type
 		}
 	}
 
