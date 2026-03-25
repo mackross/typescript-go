@@ -330,17 +330,6 @@ func TSFuncSigToJSON(sig *TSFuncSig) map[string]any {
 	return TSTypeToJSON(sig.Params[0].Type)
 }
 
-// sortedDefinitionNames returns definition names in sorted order
-// for deterministic output.
-func sortedDefinitionNames(defs map[string]*TSType) []string {
-	names := make([]string, 0, len(defs))
-	for name := range defs {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 // renderUnionToSchema converts a TSTypeUnion node into a JSON Schema map.
 // When the union contains TSTypeLiteral children (produced by extractUnionTSType
 // walking checker types directly), homogeneous literal unions are collapsed

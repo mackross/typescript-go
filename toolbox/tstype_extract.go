@@ -1303,33 +1303,3 @@ func toInt(v any) int {
 	}
 }
 
-// ExtractToolTSType extracts both ToolMetadata and a TSFuncSig from a
-// TypeScript tool file.
-func ExtractToolTSType(ctx context.Context, input ExtractInput) (*ToolMetadata, *TSFuncSig, error) {
-	if input.Files == nil {
-		return nil, nil, fmt.Errorf("toolbox: files are required")
-	}
-	if input.Entry == "" {
-		return nil, nil, fmt.Errorf("toolbox: entry is required")
-	}
-
-	meta, err := ExtractToolMetadata(ctx, input)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	sig := &TSFuncSig{
-		Description: meta.Description,
-	}
-
-	if meta.ParamsSchema != nil {
-		sig.Params = []TSFuncParam{
-			{
-				Name: "params",
-				Type: schemaToTSType(meta.ParamsSchema),
-			},
-		}
-	}
-
-	return meta, sig, nil
-}

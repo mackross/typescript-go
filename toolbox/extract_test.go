@@ -48,6 +48,31 @@ export default async function tool(params: { query: string; limit?: number }, ct
 	if _, ok := props["limit"]; !ok {
 		t.Fatal("expected 'limit' property in params schema")
 	}
+
+	// FuncSig checks.
+	if meta.FuncSig == nil {
+		t.Fatal("expected FuncSig to be populated")
+	}
+	if len(meta.FuncSig.Params) < 1 {
+		t.Fatalf("expected at least 1 param in FuncSig, got %d", len(meta.FuncSig.Params))
+	}
+	if meta.FuncSig.Params[0].Name != "params" {
+		t.Fatalf("expected FuncSig.Params[0].Name to be %q, got %q", "params", meta.FuncSig.Params[0].Name)
+	}
+	if meta.FuncSig.Params[0].Type == nil {
+		t.Fatal("expected FuncSig.Params[0].Type to be non-nil")
+	}
+	if meta.FuncSig.Params[0].Type.Kind != toolbox.TSTypeObject {
+		t.Fatalf("expected FuncSig.Params[0].Type.Kind to be TSTypeObject, got %v", meta.FuncSig.Params[0].Type.Kind)
+	}
+
+	// ParamsTSType should match FuncSig.Params[0].Type.
+	if meta.ParamsTSType == nil {
+		t.Fatal("expected ParamsTSType to be non-nil")
+	}
+	if meta.ParamsTSType != meta.FuncSig.Params[0].Type {
+		t.Fatal("expected ParamsTSType to be the same pointer as FuncSig.Params[0].Type")
+	}
 }
 
 func TestExtractToolMetadataNoJSDoc(t *testing.T) {
