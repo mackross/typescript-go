@@ -280,6 +280,13 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 		out.Types = nil
 	}
 
+	// Unwrap single-element unions: TSTypeUnion{x} → x.
+	// A single-element union is semantically identical to the element.
+	if out.Kind == TSTypeUnion && len(out.Types) == 1 {
+		collapsed := *out.Types[0]
+		out = collapsed
+	}
+
 	if len(out.EnumValues) == 0 {
 		out.EnumValues = nil
 	}
@@ -418,69 +425,17 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 				return
 			}
 
-			// Skip fixtures that use special test logic or features
-			// that cannot round-trip through TS text.
+			// Skip fixtures that genuinely cannot round-trip through TS text.
 			switch fixture.Name {
-			case "tsconfig", "unique-names", "unique-names-multiple-subdefinitions",
-				"no-unrelated-definitions", "type-alias-schema-override",
-				"generate-all-types":
-				t.Skipf("fixture %q uses special test logic", fixture.Name)
-				return
-
-			// Skip fixtures with @items annotations that override
-			// array item types — these are JSDoc annotations that
-			// cannot be represented in TS type syntax.
-			case "annotation-items":
-				t.Skipf("fixture %q uses @items annotation (not representable in TS text)", fixture.Name)
-				return
-
-			// Skip fixtures with enum values whose Go representation
-			// (jsnum.Number) differs from float64, causing
-			// allSameType to miss the "type" field in JSON Schema.
-			case "enums-compiled-compute", "enums-number-initialized":
-				t.Skipf("fixture %q has enum values with jsnum.Number type (re-parse limitation)", fixture.Name)
-				return
-
-			// Skip fixtures where nullable handling differs between
-			// the original extraction (with strictNullChecks) and
-			// the re-parsed version (ExtractToolMetadata defaults).
-			case "strict-null-checks":
-				t.Skipf("fixture %q has nullable handling differences in re-parse", fixture.Name)
-				return
-
-			// Skip fixtures where const-as-enum produces enum:[x]
-			// in original but const:x when re-parsed (semantically
-			// equivalent but structurally different).
-			case "const-as-enum":
-				t.Skipf("fixture %q has const-vs-enum structural difference", fixture.Name)
-				return
-
-			// Skip fixtures where ES symbol types render as {} which
-			// re-parses with EmptyObject=true and different
-			// AdditionalProperties — inherent to re-parsing.
-			case "symbol":
-				t.Skipf("fixture %q has ES symbol rendered as {} (re-parse difference)", fixture.Name)
-				return
-
-			// Skip fixtures with @$ref annotations that point to
-			// external schemas — not representable in TS type syntax.
 			case "annotation-ref":
-				t.Skipf("fixture %q has @$ref annotation (not representable in TS text)", fixture.Name)
+				t.Skipf("fixture %q has external $ref URLs not representable in TS type syntax", fixture.Name)
 				return
-
-			// Skip fixtures where the generator triggers infinite
-			// recursion during re-parsing (pre-existing generator bug).
 			case "map-types":
-				t.Skipf("fixture %q triggers generator infinite recursion during re-parse", fixture.Name)
+				t.Skipf("fixture %q triggers generator infinite recursion during re-parse (pre-existing bug)", fixture.Name)
 				return
-
-			// Skip fixtures where tuples extracted through type alias
-			// definitions are re-parsed as objects with numeric
-			// properties instead of tuple types (extraction path
-			// limitation).
 			case "type-aliases-tuple", "type-aliases-tuple-of-variable-length",
 				"type-aliases-tuple-with-names":
-				t.Skipf("fixture %q has tuple-via-definition re-parsed as object (extraction limitation)", fixture.Name)
+				t.Skipf("fixture %q: tuples re-parsed as objects with numeric properties (extraction limitation)", fixture.Name)
 				return
 			}
 

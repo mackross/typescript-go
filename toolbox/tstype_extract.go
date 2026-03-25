@@ -7,6 +7,7 @@ import (
 
 	"github.com/microsoft/typescript-go/internal/ast"
 	"github.com/microsoft/typescript-go/internal/checker"
+	"github.com/microsoft/typescript-go/internal/jsnum"
 )
 
 // ExtractTSType uses the existing Generator to extract a TSType for a named
@@ -313,6 +314,9 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		case float64:
 			result.LiteralValue = v
 			result.PrimitiveType = g.numberType()
+		case jsnum.Number:
+			result.LiteralValue = float64(v)
+			result.PrimitiveType = g.numberType()
 		default:
 			if s, ok := val.(string); ok {
 				result.LiteralValue = s
@@ -541,12 +545,15 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 			lit := mt.AsLiteralType()
 			val := lit.Value()
 			child := &TSType{Kind: TSTypeLiteral, LiteralValue: val}
-			switch val.(type) {
+			switch v := val.(type) {
 			case string:
 				child.PrimitiveType = "string"
 			case bool:
 				child.PrimitiveType = "boolean"
 			case float64:
+				child.PrimitiveType = g.numberType()
+			case jsnum.Number:
+				child.LiteralValue = float64(v)
 				child.PrimitiveType = g.numberType()
 			}
 			literalTypes = append(literalTypes, child)
