@@ -282,6 +282,82 @@ func TestTSTypeToJSONNoDependency(t *testing.T) {
 	}
 }
 
+// TestExtractTSTypeEquivalence verifies that for every fixture,
+// TSTypeToJSON(ExtractTSType(name)) produces identical output to
+// GenerateSchemaForName(name). This tests the full extractTSType path.
+func TestExtractTSTypeEquivalence(t *testing.T) {
+	fixtures, err := DiscoverFixtures("testdata/programs")
+	if err != nil {
+		t.Fatalf("discover fixtures: %v", err)
+	}
+	if len(fixtures) == 0 {
+		t.Fatal("expected fixtures")
+	}
+
+	for _, fixture := range fixtures {
+		fixture := fixture
+		t.Run(fixture.Name, func(t *testing.T) {
+			if knownFailingFixtures[fixture.Name] {
+				t.Skipf("known failing fixture (generator WIP)")
+			}
+			if fixture.Spec.ExpectError != "" {
+				return
+			}
+			// Skip fixtures that need special test logic.
+			switch fixture.Name {
+			case "tsconfig", "unique-names", "unique-names-multiple-subdefinitions",
+				"no-unrelated-definitions", "type-alias-schema-override",
+				"generate-all-types":
+				t.Skipf("fixture %q uses special test logic", fixture.Name)
+				return
+			}
+
+			program, err := BuildProgram(context.Background(), fixture)
+			if err != nil {
+				t.Fatalf("build program: %v", err)
+			}
+
+			// Generate schema via the normal path.
+			gen1, err := NewGenerator(program, fixture.Spec.Options)
+			if err != nil {
+				t.Fatalf("new generator: %v", err)
+			}
+			root := fixture.Spec.Root
+			if root == "" && len(fixture.SchemaFiles) == 1 && fixture.SchemaFiles[0] == "schema.json" {
+				symbols := gen1.collectTopLevelSymbols()
+				if len(symbols) > 0 {
+					root = symbols[len(symbols)-1].Name
+				}
+			}
+			if root == "" {
+				gen1.Close()
+				t.Skip("no root type found")
+				return
+			}
+			directSchema, err := gen1.GenerateSchemaForName(context.Background(), root)
+			gen1.Close()
+			if err != nil {
+				t.Fatalf("generate schema: %v", err)
+			}
+
+			// Generate TSType via ExtractTSType and render to JSON Schema.
+			gen2, err := NewGenerator(program, fixture.Spec.Options)
+			if err != nil {
+				t.Fatalf("new generator for extract: %v", err)
+			}
+			tsType, err := gen2.ExtractTSType(context.Background(), root)
+			gen2.Close()
+			if err != nil {
+				t.Fatalf("extract TSType: %v", err)
+			}
+
+			extractedSchema := TSTypeToJSON(tsType)
+
+			assertJSONEqual(t, extractedSchema, directSchema, fixture.Name+" (ExtractTSType equivalence)")
+		})
+	}
+}
+
 // TestTSTypePreservesUnionOfLiterals verifies that a union of string
 // literals is captured as TSTypeUnion with TSTypeLiteral children,
 // not as a single TSTypeEnum node.
