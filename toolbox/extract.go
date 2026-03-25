@@ -124,11 +124,10 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 		funcSig := &TSFuncSig{Description: meta.Description}
 		for _, param := range params {
 			paramType := ch.GetTypeOfSymbolAtLocation(param, sig.Declaration())
-			schema, err := gen.typeSchema(paramType, nil, sig.Declaration(), true)
+			tsType, err := gen.extractTSType(paramType, param, sig.Declaration())
 			if err != nil {
 				return nil, fmt.Errorf("toolbox: generate param schema: %w", err)
 			}
-			tsType := schemaToTSType(schema)
 			funcSig.Params = append(funcSig.Params, TSFuncParam{
 				Name: param.Name,
 				Type: tsType,
