@@ -135,23 +135,21 @@ func tsTypeToSchema(t *TSType) map[string]any {
 		}
 
 	case TSTypeUnion:
-		if len(t.Types) > 0 {
-			anyOf := make([]any, len(t.Types))
-			for i, branch := range t.Types {
-				anyOf[i] = tsTypeToSchema(branch)
+		schema = renderUnionToSchema(t)
+		// Merge any remaining non-structural keys (annotations, extra fields)
+		// into the schema produced by renderUnionToSchema.  Do NOT apply
+		// annotations/extra a second time below because we return early.
+		applyTSAnnotations(schema, t.Annotations)
+		for k, v := range t.ExtraFields {
+			if k == "type" {
+				continue // handled inside renderUnionToSchema
 			}
-			schema["anyOf"] = anyOf
+			schema[k] = v
 		}
-		// A union node may also carry a primitive type alongside anyOf.
-		if t.PrimitiveType != "" {
-			schema["type"] = t.PrimitiveType
+		if t.Nullable {
+			makeNullableSchema(schema)
 		}
-		// Handle multi-type stored in ExtraFields.
-		if t.ExtraFields != nil {
-			if multiType, ok := t.ExtraFields["type"]; ok {
-				schema["type"] = multiType
-			}
-		}
+		return schema
 
 	case TSTypeIntersection:
 		if len(t.Types) > 0 {
@@ -341,4 +339,142 @@ func sortedDefinitionNames(defs map[string]*TSType) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// renderUnionToSchema converts a TSTypeUnion node into a JSON Schema map.
+// When the union contains TSTypeLiteral children (produced by extractUnionTSType
+// walking checker types directly), homogeneous literal unions are collapsed
+// into {"enum": [...]}, boolean literal pairs become {"type":"boolean"}, and
+// single literals become {"const": val}.  For unions without literal children
+// (from the schemaToTSType round-trip path), the standard anyOf rendering is used.
+func renderUnionToSchema(t *TSType) map[string]any {
+	if t == nil || len(t.Types) == 0 {
+		return map[string]any{}
+	}
+
+	// CollapseLiterals is set by extractUnionTSType to indicate the union
+	// came from walking checker types directly. Without it, use standard
+	// anyOf rendering for schemaToTSType round-trip fidelity.
+	if !t.CollapseLiterals {
+		return renderUnionAsAnyOf(t)
+	}
+
+	// Collapsing path: classify children and apply unionSchema-equivalent logic.
+	var enumVals []any
+	var simpleTypes []string
+	var anyOf []any
+
+	for _, child := range t.Types {
+		switch child.Kind {
+		case TSTypeLiteral:
+			enumVals = append(enumVals, child.LiteralValue)
+		case TSTypePrimitive:
+			simpleTypes = append(simpleTypes, child.PrimitiveType)
+		default:
+			anyOf = append(anyOf, tsTypeToSchema(child))
+		}
+	}
+
+	// When boolean appears alongside other literal values, decompose it
+	// into true/false enum values so they can be combined into one enum array.
+	if len(enumVals) > 0 && containsStr(simpleTypes, "boolean") {
+		enumVals = append(enumVals, true, false)
+		simpleTypes = removeStr(simpleTypes, "boolean")
+	}
+
+	// When simple types subsume all enum values, drop the enum values.
+	if len(enumVals) > 0 && len(simpleTypes) > 0 {
+		enumVals = filterSubsumedEnumVals(enumVals, simpleTypes)
+	}
+
+	schema := map[string]any{}
+
+	// All literals, no primitives, no complex branches.
+	if len(enumVals) > 0 && len(anyOf) == 0 && len(simpleTypes) == 0 {
+		if allSameType(enumVals, "bool") && len(enumVals) == 2 {
+			schema["type"] = "boolean"
+			return schema
+		}
+		if len(enumVals) == 1 {
+			schema["const"] = enumVals[0]
+		} else {
+			if allSameType(enumVals, "string") {
+				sort.Slice(enumVals, func(i, j int) bool {
+					return enumVals[i].(string) < enumVals[j].(string)
+				})
+			}
+			schema["enum"] = enumVals
+		}
+		if allSameType(enumVals, "string") {
+			schema["type"] = "string"
+		} else if allSameType(enumVals, "bool") {
+			schema["type"] = "boolean"
+		} else if allSameType(enumVals, "num") {
+			schema["type"] = t.inferNumberType()
+		}
+		return schema
+	}
+
+	// When enum values coexist with simple types or anyOf branches,
+	// wrap them in an anyOf.
+	if len(enumVals) > 0 && (len(simpleTypes) > 0 || len(anyOf) > 0) {
+		enumSchema := map[string]any{"enum": enumVals}
+		anyOf = append([]any{enumSchema}, anyOf...)
+	}
+
+	if len(simpleTypes) > 0 {
+		simpleTypes = uniqueStringsStable(simpleTypes)
+		sort.Strings(simpleTypes)
+		if len(simpleTypes) == 1 {
+			schema["type"] = simpleTypes[0]
+		} else {
+			types := make([]any, len(simpleTypes))
+			for i, st := range simpleTypes {
+				types[i] = st
+			}
+			schema["type"] = types
+		}
+	}
+
+	if len(anyOf) == 1 && len(schema) == 0 {
+		if s, ok := anyOf[0].(map[string]any); ok {
+			return s
+		}
+	}
+	if len(anyOf) > 0 {
+		combined := make([]any, 0, len(anyOf))
+		combined = append(combined, anyOf...)
+		if len(schema) == 0 {
+			schema["anyOf"] = combined
+			return schema
+		}
+		combined = append(combined, schema)
+		return map[string]any{"anyOf": combined}
+	}
+
+	return schema
+}
+
+// renderUnionAsAnyOf renders a TSTypeUnion using the standard anyOf format.
+// This preserves round-trip fidelity for unions produced by schemaToTSType.
+func renderUnionAsAnyOf(t *TSType) map[string]any {
+	schema := map[string]any{}
+	if len(t.Types) > 0 {
+		anyOf := make([]any, len(t.Types))
+		for i, branch := range t.Types {
+			anyOf[i] = tsTypeToSchema(branch)
+		}
+		schema["anyOf"] = anyOf
+	}
+	// A union may also carry a primitive type alongside anyOf.
+	if t.PrimitiveType != "" {
+		schema["type"] = t.PrimitiveType
+	}
+	// Handle multi-type stored in ExtraFields.
+	if t.ExtraFields != nil {
+		if multiType, ok := t.ExtraFields["type"]; ok {
+			schema["type"] = multiType
+		}
+	}
+	return schema
 }

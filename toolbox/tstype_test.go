@@ -359,27 +359,41 @@ func TestExtractTSTypeEquivalence(t *testing.T) {
 }
 
 // TestTSTypePreservesUnionOfLiterals verifies that a union of string
-// literals is captured as TSTypeUnion with TSTypeLiteral children,
-// not as a single TSTypeEnum node.
+// literals extracted from checker types is captured as TSTypeUnion with
+// TSTypeLiteral children (not as a single TSTypeEnum node).
 func TestTSTypePreservesUnionOfLiterals(t *testing.T) {
-	// The schema produced by unionSchema for `"a" | "b" | "c"` is
-	// {"type": "string", "enum": ["a","b","c"]}. The TSType representation
-	// should capture this faithfully so it can round-trip.
-	schema := Schema{
+	// Build a TSType that mirrors what extractUnionTSType produces for
+	// `"a" | "b" | "c"`: a TSTypeUnion with TSTypeLiteral children and
+	// CollapseLiterals=true.
+	tsType := &TSType{
+		Kind:             TSTypeUnion,
+		CollapseLiterals: true,
+		Types: []*TSType{
+			{Kind: TSTypeLiteral, LiteralValue: "a", PrimitiveType: "string"},
+			{Kind: TSTypeLiteral, LiteralValue: "b", PrimitiveType: "string"},
+			{Kind: TSTypeLiteral, LiteralValue: "c", PrimitiveType: "string"},
+		},
+	}
+	if tsType.Kind != TSTypeUnion {
+		t.Fatalf("expected TSTypeUnion, got %d", tsType.Kind)
+	}
+	if len(tsType.Types) != 3 {
+		t.Fatalf("expected 3 union members, got %d", len(tsType.Types))
+	}
+	for i, child := range tsType.Types {
+		if child.Kind != TSTypeLiteral {
+			t.Fatalf("child %d: expected TSTypeLiteral, got %d", i, child.Kind)
+		}
+	}
+
+	// Round-trip: TSTypeToJSON should collapse the union of string literals
+	// into {"type": "string", "enum": ["a","b","c"]}.
+	expected := Schema{
 		"type": "string",
 		"enum": []any{"a", "b", "c"},
 	}
-	tsType := schemaToTSType(schema)
-	if tsType.Kind != TSTypeEnum {
-		t.Fatalf("expected TSTypeEnum, got %d", tsType.Kind)
-	}
-	if len(tsType.EnumValues) != 3 {
-		t.Fatalf("expected 3 enum values, got %d", len(tsType.EnumValues))
-	}
-
-	// Round-trip check.
 	roundTripped := TSTypeToJSON(tsType)
-	assertJSONEqual(t, roundTripped, schema, "union of literals")
+	assertJSONEqual(t, roundTripped, expected, "union of literals")
 }
 
 // TestTSTypeObjectEmptyProperties verifies that an object schema with

@@ -67,6 +67,11 @@ type TSType struct {
 
 	// Types holds the branches when Kind is TSTypeUnion or TSTypeIntersection.
 	Types []*TSType
+	// CollapseLiterals is set on TSTypeUnion nodes that were produced by
+	// walking checker types directly.  When true, TSTypeToJSON will
+	// collapse homogeneous literal children into {"enum": [...]} instead
+	// of rendering each literal as a separate anyOf branch.
+	CollapseLiterals bool
 
 	// --- Template literal ---
 
@@ -186,4 +191,19 @@ type TSFuncSig struct {
 type TSFuncParam struct {
 	Name string
 	Type *TSType
+}
+
+// inferNumberType returns the number type string to use for enum rendering.
+// It checks the literal children's PrimitiveType to determine whether
+// "number" or "integer" should be used.
+func (t *TSType) inferNumberType() string {
+	if t == nil {
+		return "number"
+	}
+	for _, child := range t.Types {
+		if child != nil && child.Kind == TSTypeLiteral && (child.PrimitiveType == "integer" || child.PrimitiveType == "number") {
+			return child.PrimitiveType
+		}
+	}
+	return "number"
 }

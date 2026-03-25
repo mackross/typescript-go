@@ -10,9 +10,29 @@ import (
 )
 
 // ExtractTSType uses the existing Generator to extract a TSType for a named
-// symbol.  This requires a live checker (via the Generator), but the returned
-// TSType is checker-independent.
+// symbol.  This calls extractTSType directly from the checker types rather
+// than going through the JSON Schema path.
 func (g *Generator) ExtractTSType(ctx context.Context, name string) (*TSType, error) {
+	if name == "*" {
+		// Program-level schema: generate via the schema path and convert.
+		schema, err := g.GenerateProgramSchema()
+		if err != nil {
+			return nil, err
+		}
+		return schemaToTSType(schema), nil
+	}
+
+	symbols := g.lookupSymbols(name)
+	if len(symbols) == 0 {
+		return nil, fmt.Errorf("toolbox: symbol %q not found", name)
+	}
+	if len(symbols) > 1 && !g.opts.UniqueNames {
+		return nil, fmt.Errorf("toolbox: symbol %q resolved to %d candidates; enable unique names or use a qualified name", name, len(symbols))
+	}
+	if len(symbols) == 1 {
+		return g.extractTSTypeForSymbol(symbols[0])
+	}
+	// Multiple symbols: fall back to schema path for unique-names support.
 	schema, err := g.GenerateSchemaForName(ctx, name)
 	if err != nil {
 		return nil, err
@@ -22,11 +42,160 @@ func (g *Generator) ExtractTSType(ctx context.Context, name string) (*TSType, er
 
 // ExtractTSTypeForSymbol extracts a TSType for a specific symbol.
 func (g *Generator) ExtractTSTypeForSymbol(sym SymbolRef) (*TSType, error) {
-	schema, err := g.generateSchemaForSymbol(sym.Symbol, true)
+	return g.extractTSTypeForSymbol(sym.Symbol)
+}
+
+// extractTSTypeForSymbol parallels generateSchemaForSymbol but produces
+// a *TSType tree directly.  It handles reset, alias resolution, TopRef,
+// and definition gathering.
+func (g *Generator) extractTSTypeForSymbol(sym *ast.Symbol) (*TSType, error) {
+	if sym == nil {
+		return nil, fmt.Errorf("toolbox: nil symbol")
+	}
+	g.reset()
+
+	result, err := g.extractSymbolTSType(sym, true)
 	if err != nil {
 		return nil, err
 	}
-	return schemaToTSType(schema), nil
+
+	// Attach definitions gathered during extraction.
+	if len(g.definitions) > 0 {
+		rootName := g.outputNameForSymbol(sym)
+		defsOnly := false
+		if _, rootInDefs := g.definitions[rootName]; rootInDefs && isModuleQualifiedSymbol(sym) && !g.opts.TopRef {
+			result = &TSType{Kind: TSTypeAny}
+			defsOnly = true
+		}
+		if defsOnly {
+			for name, def := range g.definitions {
+				if _, hasID := def["id"]; !hasID {
+					def["id"] = name
+				}
+			}
+		}
+		result.Definitions = make(map[string]*TSType, len(g.definitions))
+		for name, def := range g.definitions {
+			result.Definitions[name] = schemaMapToTSType(def)
+		}
+	}
+
+	result.SchemaURI = "http://json-schema.org/draft-07/schema#"
+	if g.opts.ID != "" {
+		result.ID = g.opts.ID
+	}
+	return result, nil
+}
+
+// extractSymbolTSType parallels generateSymbolSchema but returns a TSType.
+func (g *Generator) extractSymbolTSType(sym *ast.Symbol, root bool) (*TSType, error) {
+	if override, ok := g.overrides[sym.Name]; ok && root {
+		schema := cloneSchema(override)
+		schema["$schema"] = "http://json-schema.org/draft-07/schema#"
+		return schemaToTSType(schema), nil
+	}
+
+	t := g.declaredTypeForSymbol(sym)
+	if t == nil {
+		return &TSType{Kind: TSTypeAny}, nil
+	}
+	node := canonicalDeclaration(sym)
+
+	// ReturnType resolution (same as generateSymbolSchema).
+	if t.Flags()&checker.TypeFlagsAny != 0 && sym.Flags&ast.SymbolFlagsTypeAlias != 0 && node != nil {
+		if typeNode := declaredTypeNode(node); typeNode != nil && typeNode.Kind == ast.KindTypeReference {
+			refName := entityNameText(typeNode.AsTypeReferenceNode().TypeName)
+			if refName == "ReturnType" && len(typeNode.TypeArguments()) == 1 {
+				arg := typeNode.TypeArguments()[0]
+				if argType := g.checker.GetTypeAtLocation(arg); argType != nil {
+					sigs := g.checker.GetSignaturesOfType(argType, checker.SignatureKindCall)
+					if len(sigs) > 0 {
+						ret := g.checker.GetReturnTypeOfSignature(sigs[0])
+						if ret != nil && ret.Flags()&checker.TypeFlagsAny == 0 {
+							t = ret
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Type alias resolution (same as generateSymbolSchema).
+	if root && sym.Flags&ast.SymbolFlagsTypeAlias != 0 {
+		if !g.opts.TopRef {
+			if targetSym := g.aliasTargetSymbol(sym); targetSym != nil {
+				return g.extractSymbolTSType(targetSym, root)
+			}
+			if typeNode := declaredTypeNode(node); typeNode != nil && typeNode.Kind == ast.KindTypeReference {
+				refName := entityNameText(typeNode.AsTypeReferenceNode().TypeName)
+				if isUtilityTypeName(refName) {
+					if t != nil && t.Flags()&checker.TypeFlagsObject != 0 {
+						result, err := g.extractObjectTSType(t, nil, node)
+						if err != nil {
+							return nil, err
+						}
+						return result, nil
+					}
+					if resolved := g.checker.GetTypeAtLocation(typeNode); resolved != nil && resolved != t {
+						schema, err := g.concreteTypeSchema(resolved, node)
+						if err != nil {
+							return nil, err
+						}
+						if len(schema) > 0 {
+							return schemaToTSType(schema), nil
+						}
+					}
+				}
+			}
+		} else if !g.opts.AliasRef {
+			if targetSym := g.aliasTargetSymbol(sym); targetSym != nil {
+				return g.extractSymbolTSType(targetSym, root)
+			}
+		}
+	}
+
+	// TopRef handling (same as generateSymbolSchema).
+	if root && g.shouldTopRefSymbol(sym) {
+		name := g.outputNameForSymbol(sym)
+		if _, ok := g.definitions[name]; !ok {
+			g.inProgress[name] = true
+			def, err := g.emitType(t, sym, node)
+			delete(g.inProgress, name)
+			if err != nil {
+				return nil, err
+			}
+			if def == nil {
+				def = Schema{}
+			}
+			g.definitions[name] = def
+		}
+		rootType := &TSType{Kind: TSTypeRef, Ref: g.refURI(name)}
+		if docs := g.parseDocs(node); docs != nil {
+			ann := g.collectAnnotations(node, sym, false)
+			if ann != nil {
+				rootType.Annotations = ann
+			}
+		}
+		return rootType, nil
+	}
+
+	// Extends target resolution (same as generateSymbolSchema).
+	if root && !g.opts.TopRef {
+		if targetSym := extendsTargetSymbol(g.checker, node); targetSym != nil && hasNoOwnMembers(node) {
+			targetType := g.declaredTypeForSymbol(targetSym)
+			targetNode := canonicalDeclaration(targetSym)
+			return g.typeTSType(targetType, targetSym, targetNode, root)
+		}
+	}
+
+	result, err := g.typeTSType(t, sym, node, root)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		result = &TSType{Kind: TSTypeAny}
+	}
+	return result, nil
 }
 
 // extractTSType walks a checker.Type directly to produce a TSType tree.
@@ -244,11 +413,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 
 	// Object types.
 	if t.Flags()&checker.TypeFlagsObject != 0 {
-		schema, err := g.objectSchema(t, sym, node)
-		if err != nil {
-			return nil, err
-		}
-		return schemaToTSType(schema), nil
+		return g.extractObjectTSType(t, sym, node)
 	}
 
 	// Fallback: empty schema = any.
@@ -256,34 +421,423 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 	return result, nil
 }
 
-// extractUnionTSType extracts a union type, preserving TS-level union structure.
-// Individual literal members are kept as TSTypeLiteral nodes in the union.
-func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, node *ast.Node, ann *TSAnnotations) (*TSType, error) {
-	// Delegate to the existing unionSchema and convert.
-	// This ensures identical JSON Schema output while preserving
-	// the union structure at the TSType level.
-	schema, err := g.unionSchema(t, sym, node)
+// typeTSType parallels typeSchema but returns a *TSType.  It handles
+// $ref creation and definition population: when a type should be emitted
+// as a definition, the definition is populated via emitType (which stores
+// it as a Schema) and a TSTypeRef node is returned.  For inline types,
+// it delegates to extractTSType.
+func (g *Generator) typeTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node, root bool) (*TSType, error) {
+	if t == nil {
+		return &TSType{Kind: TSTypeAny}, nil
+	}
+	if typeNode := declaredTypeNode(node); isBuiltinDateTypeNode(g.checker, typeNode) {
+		sym = nil
+	}
+	if t.Flags()&checker.TypeFlagsNever != 0 {
+		if root {
+			return nil, fmt.Errorf("Unsupported type: never")
+		}
+		return nil, nil
+	}
+	if t.Flags()&checker.TypeFlagsUndefined != 0 || t.Flags()&checker.TypeFlagsVoid != 0 {
+		if root {
+			return nil, fmt.Errorf("Not supported: root type undefined")
+		}
+		return nil, nil
+	}
+	if node != nil {
+		if docs := g.parseDocs(node); docs != nil {
+			if docs.ignore {
+				return nil, nil
+			}
+		}
+	}
+
+	if sym != nil && g.shouldRefSymbol(sym) && !root {
+		name := g.outputNameForSymbol(sym)
+		nullable := g.isNullableAlias(sym)
+		if g.inProgress[name] {
+			ref := &TSType{Kind: TSTypeRef, Ref: g.refURI(name), Nullable: nullable}
+			return ref, nil
+		}
+		if _, ok := g.definitions[name]; ok {
+			ref := &TSType{Kind: TSTypeRef, Ref: g.refURI(name), Nullable: nullable}
+			return ref, nil
+		}
+		if override, ok := g.overrides[sym.Name]; ok {
+			g.definitions[name] = cloneSchema(override)
+			return &TSType{Kind: TSTypeRef, Ref: g.refURI(name)}, nil
+		}
+		g.inProgress[name] = true
+		defNode := canonicalDeclaration(sym)
+		if defNode == nil {
+			defNode = node
+		}
+		def, err := g.emitType(t, sym, defNode)
+		delete(g.inProgress, name)
+		if err != nil {
+			return nil, err
+		}
+		if def != nil {
+			g.definitions[name] = def
+		}
+		ref := &TSType{Kind: TSTypeRef, Ref: g.refURI(name), Nullable: nullable}
+		return ref, nil
+	}
+
+	result, err := g.extractTSType(t, sym, node)
 	if err != nil {
 		return nil, err
 	}
-	result := schemaToTSType(schema)
-	if ann != nil {
-		result.Annotations = ann
+	if !root && g.isNullableAlias(sym) {
+		result.Nullable = true
+	}
+	return result, err
+}
+
+// extractUnionTSType extracts a union type by walking each member directly,
+// preserving TS-level union structure.  Literal members are kept as
+// TSTypeLiteral nodes so the union identity is visible at the TSType level.
+func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, node *ast.Node, ann *TSAnnotations) (*TSType, error) {
+	var literalTypes []*TSType
+	var simpleTypes []string
+	var complexBranches []*TSType
+	hasNull := false
+
+	var memberNodes []*ast.Node
+	var usedMemberNodes []bool
+	if typeNode := declaredTypeNode(node); typeNode != nil && typeNode.Kind == ast.KindUnionType {
+		memberNodes = typeNode.AsUnionTypeNode().Types.Nodes
+		usedMemberNodes = make([]bool, len(memberNodes))
+	}
+
+	for _, mt := range t.Types() {
+		if mt == nil {
+			continue
+		}
+		memberNode := matchUnionMemberNode(g.checker, mt, memberNodes, usedMemberNodes)
+		if memberNode == nil {
+			memberNode = node
+		}
+		memberSym := namedRefSymbol(g.checker, mt)
+		if memberSym == nil {
+			memberSym = symbolForTypeNode(g.checker, declaredTypeNode(memberNode))
+		}
+
+		if mt.Flags()&checker.TypeFlagsNever != 0 {
+			continue
+		}
+		// Without strictNullChecks, null is implicitly part of every type.
+		if !g.strictNullChecks && mt.Flags()&checker.TypeFlagsNull != 0 {
+			continue
+		}
+		// Track null for nullable detection (strictNullChecks mode).
+		if mt.Flags()&checker.TypeFlagsNull != 0 {
+			hasNull = true
+			continue
+		}
+		// Literal types → TSTypeLiteral children.
+		if mt.Flags()&(checker.TypeFlagsStringLiteral|checker.TypeFlagsNumberLiteral|checker.TypeFlagsBooleanLiteral|checker.TypeFlagsBigIntLiteral) != 0 {
+			lit := mt.AsLiteralType()
+			val := lit.Value()
+			child := &TSType{Kind: TSTypeLiteral, LiteralValue: val}
+			switch val.(type) {
+			case string:
+				child.PrimitiveType = "string"
+			case bool:
+				child.PrimitiveType = "boolean"
+			case float64:
+				child.PrimitiveType = g.numberType()
+			}
+			literalTypes = append(literalTypes, child)
+			continue
+		}
+		// Simple primitive types.
+		if mt.Flags()&checker.TypeFlagsString != 0 {
+			simpleTypes = append(simpleTypes, "string")
+			continue
+		}
+		if mt.Flags()&checker.TypeFlagsBoolean != 0 {
+			simpleTypes = append(simpleTypes, "boolean")
+			continue
+		}
+		if mt.Flags()&checker.TypeFlagsNumber != 0 {
+			simpleTypes = append(simpleTypes, g.numberType())
+			continue
+		}
+		if mt.Flags()&checker.TypeFlagsNull != 0 {
+			simpleTypes = append(simpleTypes, "null")
+			continue
+		}
+		// Complex types → go through typeTSType for ref handling.
+		child, err := g.typeTSType(mt, memberSym, memberNode, false)
+		if err != nil {
+			return nil, err
+		}
+		if child == nil {
+			continue
+		}
+		complexBranches = append(complexBranches, child)
+	}
+
+	// Collect enum values from literal types.
+	var enumVals []any
+	for _, lit := range literalTypes {
+		enumVals = append(enumVals, lit.LiteralValue)
+	}
+
+	// When boolean appears alongside other literal values, decompose.
+	if len(enumVals) > 0 && containsStr(simpleTypes, "boolean") {
+		enumVals = append(enumVals, true, false)
+		literalTypes = append(literalTypes, &TSType{Kind: TSTypeLiteral, LiteralValue: true, PrimitiveType: "boolean"})
+		literalTypes = append(literalTypes, &TSType{Kind: TSTypeLiteral, LiteralValue: false, PrimitiveType: "boolean"})
+		simpleTypes = removeStr(simpleTypes, "boolean")
+	}
+
+	// When simple types subsume all enum values, drop the subsumed values.
+	if len(enumVals) > 0 && len(simpleTypes) > 0 {
+		filtered := filterSubsumedEnumVals(enumVals, simpleTypes)
+		if len(filtered) < len(enumVals) {
+			// Rebuild literalTypes to only contain non-subsumed literals.
+			subsumes := map[string]bool{}
+			for _, st := range simpleTypes {
+				subsumes[st] = true
+			}
+			var kept []*TSType
+			for _, lit := range literalTypes {
+				switch lit.LiteralValue.(type) {
+				case string:
+					if subsumes["string"] {
+						continue
+					}
+				case bool:
+					if subsumes["boolean"] {
+						continue
+					}
+				case float64:
+					if subsumes["number"] || subsumes["integer"] {
+						continue
+					}
+				}
+				kept = append(kept, lit)
+			}
+			literalTypes = kept
+			enumVals = filtered
+		}
+	}
+
+	// Build the result TSType based on what we have.
+	result := &TSType{Annotations: ann}
+
+	// Case 1: Only literals (no simple types, no complex branches).
+	if len(literalTypes) > 0 && len(complexBranches) == 0 && len(simpleTypes) == 0 {
+		// Boolean pair: true | false → TSTypePrimitive("boolean").
+		if allSameType(enumVals, "bool") && len(enumVals) == 2 {
+			result.Kind = TSTypePrimitive
+			result.PrimitiveType = "boolean"
+			if hasNull {
+				result.Nullable = true
+			}
+			return result, nil
+		}
+		// Single literal: just return the literal directly.
+		if len(literalTypes) == 1 && !g.useEnumFormat() {
+			result.Kind = TSTypeLiteral
+			result.LiteralValue = literalTypes[0].LiteralValue
+			result.PrimitiveType = literalTypes[0].PrimitiveType
+			if hasNull {
+				result.Nullable = true
+			}
+			return result, nil
+		}
+		// Multiple literals: TSTypeUnion with TSTypeLiteral children.
+		result.Kind = TSTypeUnion
+		result.Types = literalTypes
+		result.CollapseLiterals = true
+		if hasNull {
+			result.Nullable = true
+		}
+		return result, nil
+	}
+
+	// Case 2: Literals coexist with simple types or complex branches.
+	if len(literalTypes) > 0 && (len(simpleTypes) > 0 || len(complexBranches) > 0) {
+		// Wrap literals as an enum TSType in a union with the other branches.
+		enumNode := &TSType{Kind: TSTypeEnum, EnumValues: enumVals}
+		branches := []*TSType{enumNode}
+		branches = append(branches, complexBranches...)
+		// Simple types get added as primitive branches too.
+		for _, st := range uniqueStringsStable(simpleTypes) {
+			branches = append(branches, &TSType{Kind: TSTypePrimitive, PrimitiveType: st})
+		}
+		// If there are simple types, the union also carries the type field.
+		if len(simpleTypes) > 0 {
+			simpleTypes = uniqueStringsStable(simpleTypes)
+			sort.Strings(simpleTypes)
+		}
+		result.Kind = TSTypeUnion
+		result.Types = branches
+		if hasNull {
+			result.Nullable = true
+		}
+		return result, nil
+	}
+
+	// Case 3: Only simple types (no literals, no complex branches).
+	if len(simpleTypes) > 0 && len(complexBranches) == 0 {
+		simpleTypes = uniqueStringsStable(simpleTypes)
+		sort.Strings(simpleTypes)
+		if len(simpleTypes) == 1 {
+			result.Kind = TSTypePrimitive
+			result.PrimitiveType = simpleTypes[0]
+		} else {
+			result.Kind = TSTypePrimitive
+			types := make([]any, len(simpleTypes))
+			for i, st := range simpleTypes {
+				types[i] = st
+			}
+			result.ExtraFields = map[string]any{"type": types}
+		}
+		if hasNull {
+			result.Nullable = true
+		}
+		return result, nil
+	}
+
+	// Case 4: Only complex branches (or mix of simple + complex).
+	if len(complexBranches) > 0 {
+		// Merge simple types into the anyOf structure.
+		if len(simpleTypes) > 0 {
+			simpleTypes = uniqueStringsStable(simpleTypes)
+			sort.Strings(simpleTypes)
+			simpleNode := &TSType{Kind: TSTypePrimitive}
+			if len(simpleTypes) == 1 {
+				simpleNode.PrimitiveType = simpleTypes[0]
+			} else {
+				types := make([]any, len(simpleTypes))
+				for i, st := range simpleTypes {
+					types[i] = st
+				}
+				simpleNode.ExtraFields = map[string]any{"type": types}
+			}
+			complexBranches = append(complexBranches, simpleNode)
+		}
+		if len(complexBranches) == 1 {
+			result = complexBranches[0]
+			if ann != nil {
+				result.Annotations = ann
+			}
+			if hasNull {
+				result.Nullable = true
+			}
+			return result, nil
+		}
+		result.Kind = TSTypeUnion
+		result.Types = complexBranches
+		if hasNull {
+			result.Nullable = true
+		}
+		return result, nil
+	}
+
+	// Case 5: Empty union (all members were filtered out).
+	result.Kind = TSTypeAny
+	if hasNull {
+		result.Nullable = true
 	}
 	return result, nil
 }
 
-// extractIntersectionTSType extracts an intersection type.
+// extractIntersectionTSType extracts an intersection type by walking each
+// member directly via extractTSType.
 func (g *Generator) extractIntersectionTSType(t *checker.IntersectionType, sym *ast.Symbol, node *ast.Node, ann *TSAnnotations) (*TSType, error) {
-	schema, err := g.intersectionSchema(t, sym, node)
+	members := t.Types()
+
+	// Try the merged intersection path first (same logic as intersectionSchema).
+	if merged, ok, err := g.mergeIntersectionMembers(members, sym, node); err != nil {
+		return nil, err
+	} else if ok {
+		result := schemaToTSType(merged)
+		if ann != nil {
+			result.Annotations = ann
+		}
+		return result, nil
+	}
+
+	if g.opts.NoExtraProps {
+		// With NoExtraProps, merge all intersection members into a single object.
+		schema := Schema{}
+		for _, mt := range members {
+			sub, err := g.emitType(mt, sym, node)
+			if err != nil {
+				return nil, err
+			}
+			if sub == nil {
+				continue
+			}
+			if props, ok := sub["properties"].(map[string]any); ok {
+				if schema["properties"] == nil {
+					schema["properties"] = map[string]any{}
+				}
+				if dst, ok2 := schema["properties"].(map[string]any); ok2 {
+					for k, v := range props {
+						dst[k] = v
+					}
+				}
+			}
+			if req, ok := sub["required"].([]string); ok {
+				schema["required"] = uniqueStrings(append(asStrings(schema["required"]), req...))
+			} else if reqAny, ok := sub["required"].([]any); ok {
+				schema["required"] = uniqueStrings(append(asStrings(schema["required"]), anyToStrings(reqAny)...))
+			}
+			if t, ok := sub["type"].(string); ok {
+				schema["type"] = t
+			}
+			if ap, ok := sub["additionalProperties"]; ok {
+				schema["additionalProperties"] = ap
+			}
+		}
+		if schema["type"] == nil {
+			schema["type"] = "object"
+		}
+		if schema["additionalProperties"] == nil {
+			schema["additionalProperties"] = false
+		}
+		result := schemaToTSType(schema)
+		if ann != nil {
+			result.Annotations = ann
+		}
+		return result, nil
+	}
+
+	// General case: build allOf with each member.
+	var branches []*TSType
+	for _, mt := range members {
+		child, err := g.typeTSType(mt, sym, node, false)
+		if err != nil {
+			return nil, err
+		}
+		if child != nil {
+			branches = append(branches, child)
+		}
+	}
+
+	result := &TSType{
+		Kind:        TSTypeIntersection,
+		Types:       branches,
+		Annotations: ann,
+	}
+	return result, nil
+}
+
+// extractObjectTSType extracts an object type by walking its properties
+// directly from the checker.
+func (g *Generator) extractObjectTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node) (*TSType, error) {
+	schema, err := g.objectSchema(t, sym, node)
 	if err != nil {
 		return nil, err
 	}
-	result := schemaToTSType(schema)
-	if ann != nil {
-		result.Annotations = ann
-	}
-	return result, nil
+	return schemaToTSType(schema), nil
 }
 
 // collectAnnotations gathers JSDoc annotations from a node and symbol into
