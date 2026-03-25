@@ -136,8 +136,27 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 		meta.FuncSig = funcSig
 
 		if len(params) > 0 {
-			meta.ParamsSchema = TSTypeToJSON(funcSig.Params[0].Type)
-			meta.ParamsTSType = funcSig.Params[0].Type
+			paramType := funcSig.Params[0].Type
+
+			// Attach any definitions gathered during extraction.
+			// extractTSType populates g.definitions when it encounters
+			// types that should be emitted as definitions (e.g. type
+			// aliases, interfaces), but the returned TSType only has
+			// $ref pointers — the definitions map must be attached to
+			// the root TSType so callers can resolve them.
+			if len(gen.definitions) > 0 && paramType != nil {
+				if paramType.Definitions == nil {
+					paramType.Definitions = make(map[string]*TSType, len(gen.definitions))
+				}
+				for name, def := range gen.definitions {
+					if _, exists := paramType.Definitions[name]; !exists {
+						paramType.Definitions[name] = schemaMapToTSType(def)
+					}
+				}
+			}
+
+			meta.ParamsSchema = TSTypeToJSON(paramType)
+			meta.ParamsTSType = paramType
 		}
 	}
 

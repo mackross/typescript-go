@@ -65,16 +65,19 @@ func NewGenerator(program *compiler.Program, opts Options) (*Generator, error) {
 	}
 	ch, done := program.GetTypeChecker(context.Background())
 	g := &Generator{
-		program:       program,
-		checker:       ch,
-		done:          done,
-		opts:          opts,
-		rootDir:       program.GetCurrentDirectory(),
-		symbolsByName: map[string][]*ast.Symbol{},
-		overrides:     map[string]Schema{},
-		nullableTypes:    map[*ast.Symbol]bool{},
-		symbolOutputName: map[*ast.Symbol]string{},
-		outputNameOwner:  map[string]*ast.Symbol{},
+		program:            program,
+		checker:            ch,
+		done:               done,
+		opts:               opts,
+		rootDir:            program.GetCurrentDirectory(),
+		symbolsByName:      map[string][]*ast.Symbol{},
+		overrides:          map[string]Schema{},
+		definitions:        map[string]Schema{},
+		inProgress:         map[string]bool{},
+		nullableTypes:      map[*ast.Symbol]bool{},
+		symbolOutputName:   map[*ast.Symbol]string{},
+		outputNameOwner:    map[string]*ast.Symbol{},
+		aliasTargetSymbols: map[*ast.Symbol]bool{},
 	}
 	if cwd, err := os.Getwd(); err == nil {
 		g.rootDir = cwd

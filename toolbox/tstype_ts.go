@@ -2,7 +2,9 @@ package toolbox
 
 import (
 	"fmt"
+	"sort"
 	"strings"
+	"unicode"
 )
 
 // TSTypeToTS renders a TSType tree back to TypeScript source text.
@@ -19,6 +21,56 @@ func TSTypeToTS(t *TSType) string {
 		core = core + " | null"
 	}
 	return core
+}
+
+// TSTypeDeclarationsToTS emits type alias declarations for all definitions
+// in the TSType.  Each definition is rendered as "type Foo = ...;\n".
+// Definition names are sanitized to valid TypeScript identifiers.
+// Returns an empty string when there are no definitions.
+func TSTypeDeclarationsToTS(t *TSType) string {
+	if t == nil || len(t.Definitions) == 0 {
+		return ""
+	}
+	// Sort definitions for deterministic output.
+	names := make([]string, 0, len(t.Definitions))
+	for name := range t.Definitions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var sb strings.Builder
+	for _, name := range names {
+		def := t.Definitions[name]
+		sanitized := sanitizeTSIdentifier(name)
+		sb.WriteString("type ")
+		sb.WriteString(sanitized)
+		sb.WriteString(" = ")
+		sb.WriteString(TSTypeToTS(def))
+		sb.WriteString(";\n")
+	}
+	return sb.String()
+}
+
+// sanitizeTSIdentifier converts a definition name (which may contain
+// characters like <, >, spaces) into a valid TypeScript identifier.
+func sanitizeTSIdentifier(name string) string {
+	var sb strings.Builder
+	for _, r := range name {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '$' {
+			sb.WriteRune(r)
+		} else {
+			sb.WriteRune('_')
+		}
+	}
+	result := sb.String()
+	if result == "" {
+		return "_"
+	}
+	// Ensure it doesn't start with a digit.
+	if unicode.IsDigit(rune(result[0])) {
+		result = "_" + result
+	}
+	return result
 }
 
 // tsTypeToTSCore renders the core type without nullable handling.
@@ -49,12 +101,12 @@ func tsTypeToTSCore(t *TSType) string {
 		return renderLiteral(t.LiteralValue)
 
 	case TSTypeRef:
-		// $ref like "#/definitions/MyType" -> just the type name
+		// $ref like "#/definitions/MyType" -> sanitized type name
 		ref := t.Ref
 		if idx := strings.LastIndex(ref, "/"); idx >= 0 {
 			ref = ref[idx+1:]
 		}
-		return ref
+		return sanitizeTSIdentifier(ref)
 
 	case TSTypeObject:
 		return renderObject(t)
@@ -151,7 +203,12 @@ func renderObject(t *TSType) string {
 	// Handle pattern properties (numeric index, etc.)
 	for _, pp := range t.PatternProperties {
 		valType := TSTypeToTS(pp.Schema)
-		parts = append(parts, fmt.Sprintf("[key: string]: %s", valType))
+		// Numeric pattern (^[0-9]+$) → [key: number]
+		if pp.Pattern == "^[0-9]+$" {
+			parts = append(parts, fmt.Sprintf("[key: number]: %s", valType))
+		} else {
+			parts = append(parts, fmt.Sprintf("[key: string]: %s", valType))
+		}
 	}
 
 	if len(parts) == 0 {
@@ -194,14 +251,81 @@ func needsArrayGenericForm(t *TSType) bool {
 
 // renderTuple renders a TSTypeTuple as TypeScript source text.
 func renderTuple(t *TSType) string {
-	if len(t.TupleItems) == 0 {
+	if len(t.TupleItems) == 0 && t.AdditionalItems == nil {
 		return "[]"
 	}
-	parts := make([]string, len(t.TupleItems))
-	for i, item := range t.TupleItems {
-		parts[i] = TSTypeToTS(item)
+
+	// Determine which items are optional (index >= minItems).
+	minItems := len(t.TupleItems) // default: all required
+	if t.MinItems != nil {
+		minItems = *t.MinItems
 	}
+
+	var parts []string
+	for i, item := range t.TupleItems {
+		elemType := TSTypeToTS(item)
+		if i >= minItems {
+			// Optional tuple element
+			elemType += "?"
+		}
+		parts = append(parts, elemType)
+	}
+
+	// AdditionalItems → rest element.
+	// Only render as rest when it represents a genuine rest parameter,
+	// not a JSON Schema catch-all. Heuristic: skip when MinItems equals
+	// the number of tuple items AND the additional items type is a union
+	// of the tuple item types (catch-all pattern).
+	if t.AdditionalItems != nil && !isAdditionalItemsCatchAll(t) {
+		restType := TSTypeToTS(t.AdditionalItems)
+		// Wrap complex types in parens before adding []
+		if needsArrayGenericForm(t.AdditionalItems) || strings.Contains(restType, "|") || strings.Contains(restType, "&") {
+			parts = append(parts, "...Array<"+restType+">")
+		} else {
+			parts = append(parts, "..."+restType+"[]")
+		}
+	}
+
 	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// isAdditionalItemsCatchAll returns true when the AdditionalItems on a tuple
+// is just a union of all the tuple item types (JSON Schema catch-all pattern,
+// not a genuine rest element).
+func isAdditionalItemsCatchAll(t *TSType) bool {
+	if t.AdditionalItems == nil || len(t.TupleItems) == 0 {
+		return false
+	}
+	minItems := len(t.TupleItems)
+	if t.MinItems != nil {
+		minItems = *t.MinItems
+	}
+	// If not all items are required, it's a variable-length tuple, not a catch-all.
+	if minItems < len(t.TupleItems) {
+		return false
+	}
+	// If AdditionalItems is a union, check if it's the union of all tuple
+	// item types (catch-all pattern).
+	ai := t.AdditionalItems
+	if ai.Kind == TSTypeUnion && len(ai.Types) == len(t.TupleItems) {
+		// Quick check: each union branch matches a tuple item type.
+		tupleTypes := make(map[string]bool, len(t.TupleItems))
+		for _, item := range t.TupleItems {
+			tupleTypes[TSTypeToTS(item)] = true
+		}
+		for _, branch := range ai.Types {
+			if !tupleTypes[TSTypeToTS(branch)] {
+				return false
+			}
+		}
+		return true
+	}
+	// Single type AdditionalItems where there's exactly one tuple item type
+	// and they match.
+	if len(t.TupleItems) == 1 && TSTypeToTS(ai) == TSTypeToTS(t.TupleItems[0]) {
+		return true
+	}
+	return false
 }
 
 // renderUnion renders a TSTypeUnion as TypeScript source text.
