@@ -2,16 +2,11 @@ package toolbox
 
 import "sort"
 
-// ToJSONSchema converts the TSType tree into a JSON Schema map[string]any.
-func (t *TSType) ToJSONSchema() map[string]any { return TSTypeToJSON(t) }
 
-// ToJSONSchema converts the TSFuncSig to the ParamsSchema format
-// (a JSON Schema for the first parameter's type).
-func (sig *TSFuncSig) ToJSONSchema() map[string]any { return TSFuncSigToJSON(sig) }
 
-// TSTypeToJSON converts a TSType tree into a JSON Schema map[string]any.
+// tsTypeToJSON converts a tsType tree into a JSON Schema map[string]any.
 // This function does NOT depend on the checker or any internal/ packages.
-func TSTypeToJSON(t *TSType) map[string]any {
+func tsTypeToJSON(t *tsType) map[string]any {
 	if t == nil {
 		return map[string]any{}
 	}
@@ -40,8 +35,8 @@ func TSTypeToJSON(t *TSType) map[string]any {
 	return schema
 }
 
-// tsTypeToSchema recursively converts a TSType node into a schema map.
-func tsTypeToSchema(t *TSType) map[string]any {
+// tsTypeToSchema recursively converts a tsType node into a schema map.
+func tsTypeToSchema(t *tsType) map[string]any {
 	if t == nil {
 		return map[string]any{}
 	}
@@ -49,10 +44,10 @@ func tsTypeToSchema(t *TSType) map[string]any {
 	schema := map[string]any{}
 
 	switch t.Kind {
-	case TSTypeAny:
+	case tsTypeAny:
 		// Empty schema = any/unknown.
 
-	case TSTypePrimitive:
+	case tsTypePrimitive:
 		if t.PrimitiveType != "" {
 			schema["type"] = t.PrimitiveType
 		}
@@ -69,13 +64,13 @@ func tsTypeToSchema(t *TSType) map[string]any {
 			}
 		}
 
-	case TSTypeLiteral:
+	case tsTypeLiteral:
 		if t.PrimitiveType != "" {
 			schema["type"] = t.PrimitiveType
 		}
 		schema["const"] = t.LiteralValue
 
-	case TSTypeEnum:
+	case tsTypeEnum:
 		if t.PrimitiveType != "" {
 			schema["type"] = t.PrimitiveType
 		}
@@ -89,10 +84,10 @@ func tsTypeToSchema(t *TSType) map[string]any {
 			schema["enum"] = t.EnumValues
 		}
 
-	case TSTypeRef:
+	case tsTypeRef:
 		schema["$ref"] = t.Ref
 
-	case TSTypeObject:
+	case tsTypeObject:
 		schema["type"] = "object"
 		if len(t.Properties) > 0 || t.EmptyObject {
 			props := make(map[string]any, len(t.Properties))
@@ -107,7 +102,7 @@ func tsTypeToSchema(t *TSType) map[string]any {
 		applyTSAdditionalProperties(schema, t)
 		applyTSPatternProperties(schema, t)
 
-	case TSTypeArray:
+	case tsTypeArray:
 		schema["type"] = "array"
 		if t.Items != nil {
 			schema["items"] = tsTypeToSchema(t.Items)
@@ -122,7 +117,7 @@ func tsTypeToSchema(t *TSType) map[string]any {
 			schema["additionalItems"] = tsTypeToSchema(t.AdditionalItems)
 		}
 
-	case TSTypeTuple:
+	case tsTypeTuple:
 		schema["type"] = "array"
 		if len(t.TupleItems) > 0 {
 			items := make([]any, len(t.TupleItems))
@@ -141,7 +136,7 @@ func tsTypeToSchema(t *TSType) map[string]any {
 			schema["additionalItems"] = tsTypeToSchema(t.AdditionalItems)
 		}
 
-	case TSTypeUnion:
+	case tsTypeUnion:
 		schema = renderUnionToSchema(t)
 		// Merge any remaining non-structural keys (annotations, extra fields)
 		// into the schema produced by renderUnionToSchema.  Do NOT apply
@@ -158,7 +153,7 @@ func tsTypeToSchema(t *TSType) map[string]any {
 		}
 		return schema
 
-	case TSTypeIntersection:
+	case tsTypeIntersection:
 		if len(t.Types) > 0 {
 			allOf := make([]any, len(t.Types))
 			for i, branch := range t.Types {
@@ -167,7 +162,7 @@ func tsTypeToSchema(t *TSType) map[string]any {
 			schema["allOf"] = allOf
 		}
 
-	case TSTypeTemplateLiteral:
+	case tsTypeTemplateLiteral:
 		if t.PrimitiveType != "" {
 			schema["type"] = t.PrimitiveType
 		}
@@ -177,7 +172,7 @@ func tsTypeToSchema(t *TSType) map[string]any {
 	}
 
 	// Apply format if set (can appear on any kind).
-	if t.Format != "" && t.Kind != TSTypePrimitive && t.Kind != TSTypeTemplateLiteral {
+	if t.Format != "" && t.Kind != tsTypePrimitive && t.Kind != tsTypeTemplateLiteral {
 		schema["format"] = t.Format
 	}
 
@@ -201,7 +196,7 @@ func tsTypeToSchema(t *TSType) map[string]any {
 }
 
 // applyTSAdditionalProperties sets additionalProperties on the schema.
-func applyTSAdditionalProperties(schema map[string]any, t *TSType) {
+func applyTSAdditionalProperties(schema map[string]any, t *tsType) {
 	if t.AdditionalProperties != nil {
 		schema["additionalProperties"] = tsTypeToSchema(t.AdditionalProperties)
 	} else if t.AdditionalPropertiesBool != nil {
@@ -210,7 +205,7 @@ func applyTSAdditionalProperties(schema map[string]any, t *TSType) {
 }
 
 // applyTSPatternProperties sets patternProperties on the schema.
-func applyTSPatternProperties(schema map[string]any, t *TSType) {
+func applyTSPatternProperties(schema map[string]any, t *tsType) {
 	if len(t.PatternProperties) > 0 {
 		pp := make(map[string]any, len(t.PatternProperties))
 		for _, p := range t.PatternProperties {
@@ -220,8 +215,8 @@ func applyTSPatternProperties(schema map[string]any, t *TSType) {
 	}
 }
 
-// applyTSAnnotations merges TSAnnotations into a schema map.
-func applyTSAnnotations(schema map[string]any, ann *TSAnnotations) {
+// applyTSAnnotations merges tsAnnotations into a schema map.
+func applyTSAnnotations(schema map[string]any, ann *tsAnnotations) {
 	if ann == nil {
 		return
 	}
@@ -328,22 +323,21 @@ func cloneSchemaMap(in map[string]any) map[string]any {
 	return out
 }
 
-// TSFuncSigToJSON converts a TSFuncSig to the ParamsSchema format
-// (a JSON Schema for the first parameter's type).
-func TSFuncSigToJSON(sig *TSFuncSig) map[string]any {
+// tsFuncSigToJSON converts a tsFuncSig to the ParamsSchema format
+func tsFuncSigToJSON(sig *tsFuncSig) map[string]any {
 	if sig == nil || len(sig.Params) == 0 {
 		return nil
 	}
-	return TSTypeToJSON(sig.Params[0].Type)
+	return tsTypeToJSON(sig.Params[0].Type)
 }
 
-// renderUnionToSchema converts a TSTypeUnion node into a JSON Schema map.
-// When the union contains TSTypeLiteral children (produced by extractUnionTSType
+// renderUnionToSchema converts a tsTypeUnion node into a JSON Schema map.
+// When the union contains tsTypeLiteral children (produced by extractUnionTSType
 // walking checker types directly), homogeneous literal unions are collapsed
 // into {"enum": [...]}, boolean literal pairs become {"type":"boolean"}, and
 // single literals become {"const": val}.  For unions without literal children
 // (from the schemaToTSType round-trip path), the standard anyOf rendering is used.
-func renderUnionToSchema(t *TSType) map[string]any {
+func renderUnionToSchema(t *tsType) map[string]any {
 	if t == nil || len(t.Types) == 0 {
 		return map[string]any{}
 	}
@@ -362,9 +356,9 @@ func renderUnionToSchema(t *TSType) map[string]any {
 
 	for _, child := range t.Types {
 		switch child.Kind {
-		case TSTypeLiteral:
+		case tsTypeLiteral:
 			enumVals = append(enumVals, child.LiteralValue)
-		case TSTypePrimitive:
+		case tsTypePrimitive:
 			simpleTypes = append(simpleTypes, child.PrimitiveType)
 		default:
 			anyOf = append(anyOf, tsTypeToSchema(child))
@@ -451,9 +445,9 @@ func renderUnionToSchema(t *TSType) map[string]any {
 	return schema
 }
 
-// renderUnionAsAnyOf renders a TSTypeUnion using the standard anyOf format.
+// renderUnionAsAnyOf renders a tsTypeUnion using the standard anyOf format.
 // This preserves round-trip fidelity for unions produced by schemaToTSType.
-func renderUnionAsAnyOf(t *TSType) map[string]any {
+func renderUnionAsAnyOf(t *tsType) map[string]any {
 	schema := map[string]any{}
 	if len(t.Types) > 0 {
 		anyOf := make([]any, len(t.Types))

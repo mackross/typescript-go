@@ -1,48 +1,48 @@
 package toolbox
 
-// TSType is a checker-independent intermediate representation of a TypeScript
+// tsType is a checker-independent intermediate representation of a TypeScript
 // type.  Unlike the previous implementation, it captures TS-level type
 // information directly from checker.Type rather than going through JSON Schema
 // as an intermediate step.
 //
-// Build a TSType tree via Generator.extractTSType (requires a checker), then
-// render to JSON Schema via TSTypeToJSON (no checker needed).
-type TSType struct {
+// Build a tsType tree via Generator.extractTSType (requires a checker), then
+// render to JSON Schema via tsTypeToJSON (no checker needed).
+type tsType struct {
 	// Kind selects which variant of the type this node represents.
-	Kind TSTypeKind
+	Kind tsTypeKind
 
 	// --- Primitive ---
 
 	// PrimitiveType is the TS primitive: "string", "number", "boolean",
 	// "null", "any", "unknown", "bigint", "symbol", "integer".
-	// Set when Kind == TSTypePrimitive.
+	// Set when Kind == tsTypePrimitive.
 	PrimitiveType string
 
 	// --- Literal ---
 
-	// LiteralValue holds the literal value when Kind == TSTypeLiteral.
+	// LiteralValue holds the literal value when Kind == tsTypeLiteral.
 	// For string literals: string, for number literals: float64,
 	// for boolean literals: bool, for null: nil.
 	LiteralValue any
 
 	// --- Ref ---
 
-	// Ref is the $ref URI string when Kind == TSTypeRef.
+	// Ref is the $ref URI string when Kind == tsTypeRef.
 	Ref string
 
 	// --- Object ---
 
-	// Properties maps property names to their TSType schemas.
-	Properties []TSProperty
+	// Properties maps property names to their tsType schemas.
+	Properties []tsProperty
 	// Required lists required property names.
 	Required []string
 	// AdditionalProperties is the schema for additional properties:
 	//   - nil means omitted
-	//   - *TSType{} means a type constraint (e.g. string index signature)
-	AdditionalProperties     *TSType
+	//   - *tsType{} means a type constraint (e.g. string index signature)
+	AdditionalProperties     *tsType
 	AdditionalPropertiesBool *bool
 	// PatternProperties maps regex patterns to schemas (e.g. numeric index).
-	PatternProperties []TSPatternProperty
+	PatternProperties []tsPatternProperty
 	// EmptyObject flags objects with no own properties but not "any" (e.g. {}).
 	EmptyObject bool
 	// WildcardObject flags the "object" type (additionalProperties: true).
@@ -51,24 +51,24 @@ type TSType struct {
 	// --- Array ---
 
 	// Items is the element type for homogeneous arrays.
-	Items *TSType
+	Items *tsType
 
 	// --- Tuple ---
 
 	// TupleItems is the per-element types for tuple types.
-	TupleItems []*TSType
+	TupleItems []*tsType
 	// AdditionalItems is the schema for additional tuple items.
-	AdditionalItems *TSType
+	AdditionalItems *tsType
 	// MinItems / MaxItems for tuple types.
 	MinItems *int
 	MaxItems *int
 
 	// --- Union ---
 
-	// Types holds the branches when Kind is TSTypeUnion or TSTypeIntersection.
-	Types []*TSType
-	// CollapseLiterals is set on TSTypeUnion nodes that were produced by
-	// walking checker types directly.  When true, TSTypeToJSON will
+	// Types holds the branches when Kind is tsTypeUnion or tsTypeIntersection.
+	Types []*tsType
+	// CollapseLiterals is set on tsTypeUnion nodes that were produced by
+	// walking checker types directly.  When true, tsTypeToJSON will
 	// collapse homogeneous literal children into {"enum": [...]} instead
 	// of rendering each literal as a separate anyOf branch.
 	CollapseLiterals bool
@@ -86,19 +86,19 @@ type TSType struct {
 	// --- Nullable ---
 
 	// Nullable indicates that the type includes null (e.g. T | null).
-	// This is tracked separately so that TSTypeToJSON can decide
+	// This is tracked separately so that tsTypeToJSON can decide
 	// whether to use type-array or anyOf wrapping.
 	Nullable bool
 
 	// --- Annotations (from JSDoc / @TJS-* tags) ---
 
-	Annotations *TSAnnotations
+	Annotations *tsAnnotations
 
 	// --- Definitions ---
 
-	// Definitions maps definition names to their TSType schemas.
+	// Definitions maps definition names to their tsType schemas.
 	// Populated on root schemas that contain $ref'd sub-types.
-	Definitions map[string]*TSType
+	Definitions map[string]*tsType
 
 	// --- Top-level schema keys ---
 
@@ -126,48 +126,48 @@ type TSType struct {
 	ExtraFields map[string]any
 }
 
-// TSTypeKind discriminates the different shapes a TSType can take.
-type TSTypeKind int
+// tsTypeKind discriminates the different shapes a tsType can take.
+type tsTypeKind int
 
 const (
-	// TSTypePrimitive represents a primitive type (string, number, boolean, null, etc.).
-	TSTypePrimitive TSTypeKind = iota
-	// TSTypeLiteral represents a literal type ("hello", 42, true, etc.).
-	TSTypeLiteral
-	// TSTypeRef is a $ref pointer to a definition.
-	TSTypeRef
-	// TSTypeObject is an object with properties.
-	TSTypeObject
-	// TSTypeArray is a homogeneous array (T[]).
-	TSTypeArray
-	// TSTypeTuple is a tuple type ([T, U, V]).
-	TSTypeTuple
-	// TSTypeUnion is a union type (A | B | C).
-	TSTypeUnion
-	// TSTypeIntersection is an intersection type (A & B).
-	TSTypeIntersection
-	// TSTypeAny represents any/unknown (empty schema {}).
-	TSTypeAny
-	// TSTypeTemplateLiteral represents a template literal type.
-	TSTypeTemplateLiteral
-	// TSTypeEnum represents a TS enum declaration (enum Foo { A, B }).
-	TSTypeEnum
+	// tsTypePrimitive represents a primitive type (string, number, boolean, null, etc.).
+	tsTypePrimitive tsTypeKind = iota
+	// tsTypeLiteral represents a literal type ("hello", 42, true, etc.).
+	tsTypeLiteral
+	// tsTypeRef is a $ref pointer to a definition.
+	tsTypeRef
+	// tsTypeObject is an object with properties.
+	tsTypeObject
+	// tsTypeArray is a homogeneous array (T[]).
+	tsTypeArray
+	// tsTypeTuple is a tuple type ([T, U, V]).
+	tsTypeTuple
+	// tsTypeUnion is a union type (A | B | C).
+	tsTypeUnion
+	// tsTypeIntersection is an intersection type (A & B).
+	tsTypeIntersection
+	// tsTypeAny represents any/unknown (empty schema {}).
+	tsTypeAny
+	// tsTypeTemplateLiteral represents a template literal type.
+	tsTypeTemplateLiteral
+	// tsTypeEnum represents a TS enum declaration (enum Foo { A, B }).
+	tsTypeEnum
 )
 
-// TSProperty represents a single property in an object type.
-type TSProperty struct {
+// tsProperty represents a single property in an object type.
+type tsProperty struct {
 	Name   string
-	Schema *TSType
+	Schema *tsType
 }
 
-// TSPatternProperty represents a pattern property in an object type.
-type TSPatternProperty struct {
+// tsPatternProperty represents a pattern property in an object type.
+type tsPatternProperty struct {
 	Pattern string
-	Schema  *TSType
+	Schema  *tsType
 }
 
-// TSAnnotations holds documentation annotations from JSDoc.
-type TSAnnotations struct {
+// tsAnnotations holds documentation annotations from JSDoc.
+type tsAnnotations struct {
 	Description string
 	Title       string
 	Comment     string // $comment
@@ -180,29 +180,29 @@ type TSAnnotations struct {
 	Extra map[string]any
 }
 
-// TSFuncSig wraps a function signature's parameter types as TSType nodes,
+// tsFuncSig wraps a function signature's parameter types as tsType nodes,
 // along with the function's description.
-type TSFuncSig struct {
+type tsFuncSig struct {
 	Description string
-	Params      []TSFuncParam
-	ReturnType  *TSType
+	Params      []tsFuncParam
+	ReturnType  *tsType
 }
 
-// TSFuncParam represents a single function parameter with its name and type.
-type TSFuncParam struct {
+// tsFuncParam represents a single function parameter with its name and type.
+type tsFuncParam struct {
 	Name string
-	Type *TSType
+	Type *tsType
 }
 
 // inferNumberType returns the number type string to use for enum rendering.
 // It checks the literal children's PrimitiveType to determine whether
 // "number" or "integer" should be used.
-func (t *TSType) inferNumberType() string {
+func (t *tsType) inferNumberType() string {
 	if t == nil {
 		return "number"
 	}
 	for _, child := range t.Types {
-		if child != nil && child.Kind == TSTypeLiteral && (child.PrimitiveType == "integer" || child.PrimitiveType == "number") {
+		if child != nil && child.Kind == tsTypeLiteral && (child.PrimitiveType == "integer" || child.PrimitiveType == "number") {
 			return child.PrimitiveType
 		}
 	}

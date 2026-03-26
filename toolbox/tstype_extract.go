@@ -10,10 +10,10 @@ import (
 	"github.com/microsoft/typescript-go/internal/jsnum"
 )
 
-// ExtractTSType uses the existing Generator to extract a TSType for a named
+// ExtractTSType uses the existing Generator to extract a tsType for a named
 // symbol.  This calls extractTSType directly from the checker types rather
 // than going through the JSON Schema path.
-func (g *Generator) ExtractTSType(ctx context.Context, name string) (*TSType, error) {
+func (g *Generator) ExtractTSType(ctx context.Context, name string) (*tsType, error) {
 	if name == "*" {
 		// Program-level schema: generate via the schema path and convert.
 		schema, err := g.GenerateProgramSchema()
@@ -41,15 +41,15 @@ func (g *Generator) ExtractTSType(ctx context.Context, name string) (*TSType, er
 	return schemaToTSType(schema), nil
 }
 
-// ExtractTSTypeForSymbol extracts a TSType for a specific symbol.
-func (g *Generator) ExtractTSTypeForSymbol(sym SymbolRef) (*TSType, error) {
+// ExtractTSTypeForSymbol extracts a tsType for a specific symbol.
+func (g *Generator) ExtractTSTypeForSymbol(sym SymbolRef) (*tsType, error) {
 	return g.extractTSTypeForSymbol(sym.Symbol)
 }
 
 // extractTSTypeForSymbol parallels generateSchemaForSymbol but produces
-// a *TSType tree directly.  It handles reset, alias resolution, TopRef,
+// a *tsType tree directly.  It handles reset, alias resolution, TopRef,
 // and definition gathering.
-func (g *Generator) extractTSTypeForSymbol(sym *ast.Symbol) (*TSType, error) {
+func (g *Generator) extractTSTypeForSymbol(sym *ast.Symbol) (*tsType, error) {
 	if sym == nil {
 		return nil, fmt.Errorf("toolbox: nil symbol")
 	}
@@ -65,7 +65,7 @@ func (g *Generator) extractTSTypeForSymbol(sym *ast.Symbol) (*TSType, error) {
 		rootName := g.outputNameForSymbol(sym)
 		defsOnly := false
 		if _, rootInDefs := g.definitions[rootName]; rootInDefs && isModuleQualifiedSymbol(sym) && !g.opts.TopRef {
-			result = &TSType{Kind: TSTypeAny}
+			result = &tsType{Kind: tsTypeAny}
 			defsOnly = true
 		}
 		if defsOnly {
@@ -75,7 +75,7 @@ func (g *Generator) extractTSTypeForSymbol(sym *ast.Symbol) (*TSType, error) {
 				}
 			}
 		}
-		result.Definitions = make(map[string]*TSType, len(g.definitions))
+		result.Definitions = make(map[string]*tsType, len(g.definitions))
 		for name, def := range g.definitions {
 			result.Definitions[name] = schemaMapToTSType(def)
 		}
@@ -88,8 +88,8 @@ func (g *Generator) extractTSTypeForSymbol(sym *ast.Symbol) (*TSType, error) {
 	return result, nil
 }
 
-// extractSymbolTSType parallels generateSymbolSchema but returns a TSType.
-func (g *Generator) extractSymbolTSType(sym *ast.Symbol, root bool) (*TSType, error) {
+// extractSymbolTSType parallels generateSymbolSchema but returns a tsType.
+func (g *Generator) extractSymbolTSType(sym *ast.Symbol, root bool) (*tsType, error) {
 	if override, ok := g.overrides[sym.Name]; ok && root {
 		schema := cloneSchema(override)
 		schema["$schema"] = "http://json-schema.org/draft-07/schema#"
@@ -98,7 +98,7 @@ func (g *Generator) extractSymbolTSType(sym *ast.Symbol, root bool) (*TSType, er
 
 	t := g.declaredTypeForSymbol(sym)
 	if t == nil {
-		return &TSType{Kind: TSTypeAny}, nil
+		return &tsType{Kind: tsTypeAny}, nil
 	}
 	node := canonicalDeclaration(sym)
 
@@ -170,7 +170,7 @@ func (g *Generator) extractSymbolTSType(sym *ast.Symbol, root bool) (*TSType, er
 			}
 			g.definitions[name] = def
 		}
-		rootType := &TSType{Kind: TSTypeRef, Ref: g.refURI(name)}
+		rootType := &tsType{Kind: tsTypeRef, Ref: g.refURI(name)}
 		if docs := g.parseDocs(node); docs != nil {
 			ann := g.collectAnnotations(node, sym, false)
 			if ann != nil {
@@ -194,19 +194,19 @@ func (g *Generator) extractSymbolTSType(sym *ast.Symbol, root bool) (*TSType, er
 		return nil, err
 	}
 	if result == nil {
-		result = &TSType{Kind: TSTypeAny}
+		result = &tsType{Kind: tsTypeAny}
 	}
 	return result, nil
 }
 
-// extractTSType walks a checker.Type directly to produce a TSType tree.
-// This parallels emitType but outputs TSType nodes instead of map[string]any.
-func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node) (*TSType, error) {
+// extractTSType walks a checker.Type directly to produce a tsType tree.
+// This parallels emitType but outputs tsType nodes instead of map[string]any.
+func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node) (*tsType, error) {
 	if t == nil {
-		return &TSType{Kind: TSTypeAny}, nil
+		return &tsType{Kind: tsTypeAny}, nil
 	}
 
-	result := &TSType{}
+	result := &tsType{}
 
 	// Collect JSDoc annotations from the node and symbol.
 	isTypeAlias := sym != nil && sym.Flags&ast.SymbolFlagsTypeAlias != 0
@@ -226,7 +226,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 
 	// When @TJS-type fully overrides the type on an object type, return directly.
 	if docTypeOverride != "" && t.Flags()&checker.TypeFlagsObject != 0 {
-		result.Kind = TSTypePrimitive
+		result.Kind = tsTypePrimitive
 		result.PrimitiveType = docTypeOverride
 		return result, nil
 	}
@@ -300,7 +300,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 	if t.Flags()&(checker.TypeFlagsStringLiteral|checker.TypeFlagsNumberLiteral|checker.TypeFlagsBooleanLiteral|checker.TypeFlagsBigIntLiteral) != 0 {
 		lit := t.AsLiteralType()
 		val := lit.Value()
-		result.Kind = TSTypeLiteral
+		result.Kind = tsTypeLiteral
 		switch v := val.(type) {
 		case string:
 			result.LiteralValue = v
@@ -338,7 +338,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 
 	// Template literal types.
 	if t.Flags()&checker.TypeFlagsTemplateLiteral != 0 {
-		result.Kind = TSTypeTemplateLiteral
+		result.Kind = tsTypeTemplateLiteral
 		if docTypeOverride == "" {
 			result.PrimitiveType = "string"
 		}
@@ -350,7 +350,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 
 	// Primitive types.
 	if t.Flags()&checker.TypeFlagsString != 0 {
-		result.Kind = TSTypePrimitive
+		result.Kind = tsTypePrimitive
 		if docTypeOverride == "" {
 			result.PrimitiveType = "string"
 		} else {
@@ -359,7 +359,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		return result, nil
 	}
 	if t.Flags()&checker.TypeFlagsBoolean != 0 {
-		result.Kind = TSTypePrimitive
+		result.Kind = tsTypePrimitive
 		if docTypeOverride == "" {
 			result.PrimitiveType = "boolean"
 		} else {
@@ -368,7 +368,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		return result, nil
 	}
 	if t.Flags()&checker.TypeFlagsNumber != 0 {
-		result.Kind = TSTypePrimitive
+		result.Kind = tsTypePrimitive
 		if docTypeOverride == "" {
 			result.PrimitiveType = g.numberType()
 		} else {
@@ -377,7 +377,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		return result, nil
 	}
 	if t.Flags()&checker.TypeFlagsBigInt != 0 {
-		result.Kind = TSTypePrimitive
+		result.Kind = tsTypePrimitive
 		if docTypeOverride == "" {
 			result.PrimitiveType = g.numberType()
 		} else {
@@ -386,7 +386,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		return result, nil
 	}
 	if t.Flags()&checker.TypeFlagsNull != 0 {
-		result.Kind = TSTypePrimitive
+		result.Kind = tsTypePrimitive
 		if docTypeOverride == "" {
 			result.PrimitiveType = "null"
 		} else {
@@ -395,7 +395,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		return result, nil
 	}
 	if t.Flags()&checker.TypeFlagsESSymbol != 0 || t.Flags()&checker.TypeFlagsUniqueESSymbol != 0 {
-		result.Kind = TSTypePrimitive
+		result.Kind = tsTypePrimitive
 		if docTypeOverride == "" {
 			result.PrimitiveType = "object"
 		} else {
@@ -411,14 +411,14 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		} else if ok {
 			return schemaToTSType(parsed), nil
 		}
-		result.Kind = TSTypeAny
+		result.Kind = tsTypeAny
 		return result, nil
 	}
 
 	// Tuple types (which are object types with ObjectFlagsTuple).
 	// Detect tuples before the generic object path so that inline
 	// tuple literals (e.g. function params typed as [string, number])
-	// are extracted as TSTypeTuple rather than TSTypeObject with
+	// are extracted as tsTypeTuple rather than tsTypeObject with
 	// numeric properties.
 	if t.Flags()&checker.TypeFlagsObject != 0 && checker.IsTupleType(t) {
 		return g.extractTupleTSType(t, result)
@@ -430,18 +430,18 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 	}
 
 	// Fallback: empty schema = any.
-	result.Kind = TSTypeAny
+	result.Kind = tsTypeAny
 	return result, nil
 }
 
-// typeTSType parallels typeSchema but returns a *TSType.  It handles
+// typeTSType parallels typeSchema but returns a *tsType.  It handles
 // $ref creation and definition population: when a type should be emitted
 // as a definition, the definition is populated via emitType (which stores
-// it as a Schema) and a TSTypeRef node is returned.  For inline types,
+// it as a Schema) and a tsTypeRef node is returned.  For inline types,
 // it delegates to extractTSType.
-func (g *Generator) typeTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node, root bool) (*TSType, error) {
+func (g *Generator) typeTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node, root bool) (*tsType, error) {
 	if t == nil {
-		return &TSType{Kind: TSTypeAny}, nil
+		return &tsType{Kind: tsTypeAny}, nil
 	}
 	if typeNode := declaredTypeNode(node); isBuiltinDateTypeNode(g.checker, typeNode) {
 		sym = nil
@@ -470,16 +470,16 @@ func (g *Generator) typeTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node,
 		name := g.outputNameForSymbol(sym)
 		nullable := g.isNullableAlias(sym)
 		if g.inProgress[name] {
-			ref := &TSType{Kind: TSTypeRef, Ref: g.refURI(name), Nullable: nullable}
+			ref := &tsType{Kind: tsTypeRef, Ref: g.refURI(name), Nullable: nullable}
 			return ref, nil
 		}
 		if _, ok := g.definitions[name]; ok {
-			ref := &TSType{Kind: TSTypeRef, Ref: g.refURI(name), Nullable: nullable}
+			ref := &tsType{Kind: tsTypeRef, Ref: g.refURI(name), Nullable: nullable}
 			return ref, nil
 		}
 		if override, ok := g.overrides[sym.Name]; ok {
 			g.definitions[name] = cloneSchema(override)
-			return &TSType{Kind: TSTypeRef, Ref: g.refURI(name)}, nil
+			return &tsType{Kind: tsTypeRef, Ref: g.refURI(name)}, nil
 		}
 		g.inProgress[name] = true
 		defNode := canonicalDeclaration(sym)
@@ -494,7 +494,7 @@ func (g *Generator) typeTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node,
 		if def != nil {
 			g.definitions[name] = def
 		}
-		ref := &TSType{Kind: TSTypeRef, Ref: g.refURI(name), Nullable: nullable}
+		ref := &tsType{Kind: tsTypeRef, Ref: g.refURI(name), Nullable: nullable}
 		return ref, nil
 	}
 
@@ -510,11 +510,11 @@ func (g *Generator) typeTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node,
 
 // extractUnionTSType extracts a union type by walking each member directly,
 // preserving TS-level union structure.  Literal members are kept as
-// TSTypeLiteral nodes so the union identity is visible at the TSType level.
-func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, node *ast.Node, ann *TSAnnotations) (*TSType, error) {
-	var literalTypes []*TSType
+// tsTypeLiteral nodes so the union identity is visible at the tsType level.
+func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, node *ast.Node, ann *tsAnnotations) (*tsType, error) {
+	var literalTypes []*tsType
 	var simpleTypes []string
-	var complexBranches []*TSType
+	var complexBranches []*tsType
 	hasNull := false
 
 	var memberNodes []*ast.Node
@@ -549,11 +549,11 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 			hasNull = true
 			continue
 		}
-		// Literal types → TSTypeLiteral children.
+		// Literal types → tsTypeLiteral children.
 		if mt.Flags()&(checker.TypeFlagsStringLiteral|checker.TypeFlagsNumberLiteral|checker.TypeFlagsBooleanLiteral|checker.TypeFlagsBigIntLiteral) != 0 {
 			lit := mt.AsLiteralType()
 			val := lit.Value()
-			child := &TSType{Kind: TSTypeLiteral, LiteralValue: val}
+			child := &tsType{Kind: tsTypeLiteral, LiteralValue: val}
 			switch v := val.(type) {
 			case string:
 				child.PrimitiveType = "string"
@@ -605,8 +605,8 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 	// When boolean appears alongside other literal values, decompose.
 	if len(enumVals) > 0 && containsStr(simpleTypes, "boolean") {
 		enumVals = append(enumVals, true, false)
-		literalTypes = append(literalTypes, &TSType{Kind: TSTypeLiteral, LiteralValue: true, PrimitiveType: "boolean"})
-		literalTypes = append(literalTypes, &TSType{Kind: TSTypeLiteral, LiteralValue: false, PrimitiveType: "boolean"})
+		literalTypes = append(literalTypes, &tsType{Kind: tsTypeLiteral, LiteralValue: true, PrimitiveType: "boolean"})
+		literalTypes = append(literalTypes, &tsType{Kind: tsTypeLiteral, LiteralValue: false, PrimitiveType: "boolean"})
 		simpleTypes = removeStr(simpleTypes, "boolean")
 	}
 
@@ -619,7 +619,7 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 			for _, st := range simpleTypes {
 				subsumes[st] = true
 			}
-			var kept []*TSType
+			var kept []*tsType
 			for _, lit := range literalTypes {
 				switch lit.LiteralValue.(type) {
 				case string:
@@ -642,14 +642,14 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 		}
 	}
 
-	// Build the result TSType based on what we have.
-	result := &TSType{Annotations: ann}
+	// Build the result tsType based on what we have.
+	result := &tsType{Annotations: ann}
 
 	// Case 1: Only literals (no simple types, no complex branches).
 	if len(literalTypes) > 0 && len(complexBranches) == 0 && len(simpleTypes) == 0 {
-		// Boolean pair: true | false → TSTypePrimitive("boolean").
+		// Boolean pair: true | false → tsTypePrimitive("boolean").
 		if allSameType(enumVals, "bool") && len(enumVals) == 2 {
-			result.Kind = TSTypePrimitive
+			result.Kind = tsTypePrimitive
 			result.PrimitiveType = "boolean"
 			if hasNull {
 				result.Nullable = true
@@ -658,7 +658,7 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 		}
 		// Single literal: just return the literal directly.
 		if len(literalTypes) == 1 && !g.useEnumFormat() {
-			result.Kind = TSTypeLiteral
+			result.Kind = tsTypeLiteral
 			result.LiteralValue = literalTypes[0].LiteralValue
 			result.PrimitiveType = literalTypes[0].PrimitiveType
 			if hasNull {
@@ -666,8 +666,8 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 			}
 			return result, nil
 		}
-		// Multiple literals: TSTypeUnion with TSTypeLiteral children.
-		result.Kind = TSTypeUnion
+		// Multiple literals: tsTypeUnion with tsTypeLiteral children.
+		result.Kind = tsTypeUnion
 		result.Types = literalTypes
 		result.CollapseLiterals = true
 		if hasNull {
@@ -678,20 +678,20 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 
 	// Case 2: Literals coexist with simple types or complex branches.
 	if len(literalTypes) > 0 && (len(simpleTypes) > 0 || len(complexBranches) > 0) {
-		// Wrap literals as an enum TSType in a union with the other branches.
-		enumNode := &TSType{Kind: TSTypeEnum, EnumValues: enumVals}
-		branches := []*TSType{enumNode}
+		// Wrap literals as an enum tsType in a union with the other branches.
+		enumNode := &tsType{Kind: tsTypeEnum, EnumValues: enumVals}
+		branches := []*tsType{enumNode}
 		branches = append(branches, complexBranches...)
 		// Simple types get added as primitive branches too.
 		for _, st := range uniqueStringsStable(simpleTypes) {
-			branches = append(branches, &TSType{Kind: TSTypePrimitive, PrimitiveType: st})
+			branches = append(branches, &tsType{Kind: tsTypePrimitive, PrimitiveType: st})
 		}
 		// If there are simple types, the union also carries the type field.
 		if len(simpleTypes) > 0 {
 			simpleTypes = uniqueStringsStable(simpleTypes)
 			sort.Strings(simpleTypes)
 		}
-		result.Kind = TSTypeUnion
+		result.Kind = tsTypeUnion
 		result.Types = branches
 		if hasNull {
 			result.Nullable = true
@@ -704,10 +704,10 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 		simpleTypes = uniqueStringsStable(simpleTypes)
 		sort.Strings(simpleTypes)
 		if len(simpleTypes) == 1 {
-			result.Kind = TSTypePrimitive
+			result.Kind = tsTypePrimitive
 			result.PrimitiveType = simpleTypes[0]
 		} else {
-			result.Kind = TSTypePrimitive
+			result.Kind = tsTypePrimitive
 			types := make([]any, len(simpleTypes))
 			for i, st := range simpleTypes {
 				types[i] = st
@@ -726,7 +726,7 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 		if len(simpleTypes) > 0 {
 			simpleTypes = uniqueStringsStable(simpleTypes)
 			sort.Strings(simpleTypes)
-			simpleNode := &TSType{Kind: TSTypePrimitive}
+			simpleNode := &tsType{Kind: tsTypePrimitive}
 			if len(simpleTypes) == 1 {
 				simpleNode.PrimitiveType = simpleTypes[0]
 			} else {
@@ -748,7 +748,7 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 			}
 			return result, nil
 		}
-		result.Kind = TSTypeUnion
+		result.Kind = tsTypeUnion
 		result.Types = complexBranches
 		if hasNull {
 			result.Nullable = true
@@ -757,7 +757,7 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 	}
 
 	// Case 5: Empty union (all members were filtered out).
-	result.Kind = TSTypeAny
+	result.Kind = tsTypeAny
 	if hasNull {
 		result.Nullable = true
 	}
@@ -766,7 +766,7 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 
 // extractIntersectionTSType extracts an intersection type by walking each
 // member directly via extractTSType.
-func (g *Generator) extractIntersectionTSType(t *checker.IntersectionType, sym *ast.Symbol, node *ast.Node, ann *TSAnnotations) (*TSType, error) {
+func (g *Generator) extractIntersectionTSType(t *checker.IntersectionType, sym *ast.Symbol, node *ast.Node, ann *tsAnnotations) (*tsType, error) {
 	members := t.Types()
 
 	// Try the merged intersection path first (same logic as intersectionSchema).
@@ -827,7 +827,7 @@ func (g *Generator) extractIntersectionTSType(t *checker.IntersectionType, sym *
 	}
 
 	// General case: build allOf with each member.
-	var branches []*TSType
+	var branches []*tsType
 	for _, mt := range members {
 		child, err := g.typeTSType(mt, sym, node, false)
 		if err != nil {
@@ -838,8 +838,8 @@ func (g *Generator) extractIntersectionTSType(t *checker.IntersectionType, sym *
 		}
 	}
 
-	result := &TSType{
-		Kind:        TSTypeIntersection,
+	result := &tsType{
+		Kind:        tsTypeIntersection,
 		Types:       branches,
 		Annotations: ann,
 	}
@@ -847,15 +847,15 @@ func (g *Generator) extractIntersectionTSType(t *checker.IntersectionType, sym *
 }
 
 // extractTupleTSType extracts a tuple type directly from checker type
-// arguments and element flags, producing a TSTypeTuple node.
+// arguments and element flags, producing a tsTypeTuple node.
 // This is called when IsTupleType(t) returns true, which covers both
 // named tuple type aliases and inline tuple literals in function params.
-func (g *Generator) extractTupleTSType(t *checker.Type, result *TSType) (*TSType, error) {
+func (g *Generator) extractTupleTSType(t *checker.Type, result *tsType) (*tsType, error) {
 	tupleType := t.TargetTupleType()
 	typeArgs := g.checker.GetTypeArguments(t)
 	elementFlags := tupleType.ElementFlags()
 
-	result.Kind = TSTypeTuple
+	result.Kind = tsTypeTuple
 
 	minItems := 0
 	for i, arg := range typeArgs {
@@ -897,7 +897,7 @@ func (g *Generator) extractTupleTSType(t *checker.Type, result *TSType) (*TSType
 
 // extractObjectTSType extracts an object type by walking its properties
 // directly from the checker.
-func (g *Generator) extractObjectTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node) (*TSType, error) {
+func (g *Generator) extractObjectTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node) (*tsType, error) {
 	schema, err := g.objectSchema(t, sym, node)
 	if err != nil {
 		return nil, err
@@ -906,9 +906,9 @@ func (g *Generator) extractObjectTSType(t *checker.Type, sym *ast.Symbol, node *
 }
 
 // collectAnnotations gathers JSDoc annotations from a node and symbol into
-// a TSAnnotations struct.
-func (g *Generator) collectAnnotations(node *ast.Node, sym *ast.Symbol, isTypeAlias bool) *TSAnnotations {
-	ann := &TSAnnotations{}
+// a tsAnnotations struct.
+func (g *Generator) collectAnnotations(node *ast.Node, sym *ast.Symbol, isTypeAlias bool) *tsAnnotations {
+	ann := &tsAnnotations{}
 	hasContent := false
 
 	applyDocs := func(docs *docInfo, overwrite bool) {
@@ -988,9 +988,9 @@ func (g *Generator) collectAnnotations(node *ast.Node, sym *ast.Symbol, isTypeAl
 	return ann
 }
 
-// annotationsToSchema converts TSAnnotations to a partial JSON Schema map
+// annotationsToSchema converts tsAnnotations to a partial JSON Schema map
 // for use with overlayParsedSchema.
-func (g *Generator) annotationsToSchema(ann *TSAnnotations) Schema {
+func (g *Generator) annotationsToSchema(ann *tsAnnotations) Schema {
 	if ann == nil {
 		return Schema{}
 	}
@@ -1022,12 +1022,12 @@ func (g *Generator) annotationsToSchema(ann *TSAnnotations) Schema {
 	return schema
 }
 
-// schemaToTSType converts a JSON Schema (map[string]any) to a TSType tree.
+// schemaToTSType converts a JSON Schema (map[string]any) to a tsType tree.
 // This is used internally for cases where we still delegate to the schema
 // generation path (e.g. object types, utility types).
-func schemaToTSType(schema map[string]any) *TSType {
+func schemaToTSType(schema map[string]any) *tsType {
 	if schema == nil {
-		return &TSType{Kind: TSTypeAny}
+		return &tsType{Kind: tsTypeAny}
 	}
 	t := schemaMapToTSType(schema)
 
@@ -1046,14 +1046,14 @@ func schemaToTSType(schema map[string]any) *TSType {
 	// Extract definitions.
 	switch defs := schema["definitions"].(type) {
 	case map[string]any:
-		t.Definitions = make(map[string]*TSType, len(defs))
+		t.Definitions = make(map[string]*tsType, len(defs))
 		for name, def := range defs {
 			if defMap, ok := def.(map[string]any); ok {
 				t.Definitions[name] = schemaMapToTSType(defMap)
 			}
 		}
 	case map[string]Schema:
-		t.Definitions = make(map[string]*TSType, len(defs))
+		t.Definitions = make(map[string]*tsType, len(defs))
 		for name, def := range defs {
 			t.Definitions[name] = schemaMapToTSType(def)
 		}
@@ -1063,13 +1063,13 @@ func schemaToTSType(schema map[string]any) *TSType {
 }
 
 // schemaMapToTSType converts a single schema node (without top-level keys)
-// to a TSType.
-func schemaMapToTSType(schema map[string]any) *TSType {
+// to a tsType.
+func schemaMapToTSType(schema map[string]any) *tsType {
 	if schema == nil {
-		return &TSType{Kind: TSTypeAny}
+		return &tsType{Kind: tsTypeAny}
 	}
 
-	t := &TSType{}
+	t := &tsType{}
 
 	// Extract annotations first (they can appear on any kind).
 	t.Annotations = extractSchemaAnnotations(schema)
@@ -1081,7 +1081,7 @@ func schemaMapToTSType(schema map[string]any) *TSType {
 
 	// Check for $ref.
 	if ref, ok := schema["$ref"].(string); ok {
-		t.Kind = TSTypeRef
+		t.Kind = tsTypeRef
 		t.Ref = ref
 		extractSchemaExtraFields(t, schema)
 		return t
@@ -1089,13 +1089,13 @@ func schemaMapToTSType(schema map[string]any) *TSType {
 
 	// Check for anyOf (union).
 	if anyOf, ok := schema["anyOf"].([]any); ok {
-		t.Kind = TSTypeUnion
-		t.Types = make([]*TSType, len(anyOf))
+		t.Kind = tsTypeUnion
+		t.Types = make([]*tsType, len(anyOf))
 		for i, branch := range anyOf {
 			if branchMap, ok := branch.(map[string]any); ok {
 				t.Types[i] = schemaMapToTSType(branchMap)
 			} else {
-				t.Types[i] = &TSType{Kind: TSTypeAny}
+				t.Types[i] = &tsType{Kind: tsTypeAny}
 			}
 		}
 		// A union may also carry a "type" field (simple types alongside anyOf).
@@ -1107,13 +1107,13 @@ func schemaMapToTSType(schema map[string]any) *TSType {
 
 	// Check for allOf (intersection).
 	if allOf, ok := schema["allOf"].([]any); ok {
-		t.Kind = TSTypeIntersection
-		t.Types = make([]*TSType, len(allOf))
+		t.Kind = tsTypeIntersection
+		t.Types = make([]*tsType, len(allOf))
 		for i, branch := range allOf {
 			if branchMap, ok := branch.(map[string]any); ok {
 				t.Types[i] = schemaMapToTSType(branchMap)
 			} else {
-				t.Types[i] = &TSType{Kind: TSTypeAny}
+				t.Types[i] = &tsType{Kind: tsTypeAny}
 			}
 		}
 		return t
@@ -1121,7 +1121,7 @@ func schemaMapToTSType(schema map[string]any) *TSType {
 
 	// Check for enum (multiple values).
 	if enumVals, ok := schema["enum"].([]any); ok {
-		t.Kind = TSTypeEnum
+		t.Kind = tsTypeEnum
 		t.EnumValues = enumVals
 		if typ, ok := schema["type"]; ok {
 			switch v := typ.(type) {
@@ -1137,7 +1137,7 @@ func schemaMapToTSType(schema map[string]any) *TSType {
 
 	// Check for const (single literal value from schema).
 	if constVal, hasConst := schema["const"]; hasConst {
-		t.Kind = TSTypeLiteral
+		t.Kind = tsTypeLiteral
 		t.LiteralValue = constVal
 		if typ, ok := schema["type"].(string); ok {
 			t.PrimitiveType = typ
@@ -1150,10 +1150,10 @@ func schemaMapToTSType(schema map[string]any) *TSType {
 	if !hasType {
 		// Empty schema = any.
 		if len(schema) == 0 || onlyAnnotationKeys(schema) {
-			t.Kind = TSTypeAny
+			t.Kind = tsTypeAny
 			return t
 		}
-		t.Kind = TSTypeAny
+		t.Kind = tsTypeAny
 		extractSchemaExtraFields(t, schema)
 		return t
 	}
@@ -1161,7 +1161,7 @@ func schemaMapToTSType(schema map[string]any) *TSType {
 	typeStr, isStr := typ.(string)
 	if !isStr {
 		// Multi-type: e.g. ["string", "null"].
-		t.Kind = TSTypePrimitive
+		t.Kind = tsTypePrimitive
 		// Store multi-type as ExtraFields for round-trip fidelity.
 		t.ExtraFields = map[string]any{"type": typ}
 		extractSchemaExtraFields(t, schema)
@@ -1170,12 +1170,12 @@ func schemaMapToTSType(schema map[string]any) *TSType {
 
 	switch typeStr {
 	case "object":
-		t.Kind = TSTypeObject
+		t.Kind = tsTypeObject
 		extractSchemaObjectFields(t, schema)
 	case "array":
 		extractSchemaArrayFields(t, schema)
 	case "string":
-		t.Kind = TSTypePrimitive
+		t.Kind = tsTypePrimitive
 		t.PrimitiveType = typeStr
 		if p, ok := schema["pattern"].(string); ok {
 			t.Pattern = p
@@ -1185,11 +1185,11 @@ func schemaMapToTSType(schema map[string]any) *TSType {
 		}
 		extractSchemaExtraFields(t, schema)
 	case "number", "integer", "boolean", "null":
-		t.Kind = TSTypePrimitive
+		t.Kind = tsTypePrimitive
 		t.PrimitiveType = typeStr
 		extractSchemaExtraFields(t, schema)
 	default:
-		t.Kind = TSTypePrimitive
+		t.Kind = tsTypePrimitive
 		t.PrimitiveType = typeStr
 		extractSchemaExtraFields(t, schema)
 	}
@@ -1197,8 +1197,8 @@ func schemaMapToTSType(schema map[string]any) *TSType {
 	return t
 }
 
-// extractSchemaObjectFields populates object-specific fields on a TSType.
-func extractSchemaObjectFields(t *TSType, schema map[string]any) {
+// extractSchemaObjectFields populates object-specific fields on a tsType.
+func extractSchemaObjectFields(t *tsType, schema map[string]any) {
 	if props, ok := schema["properties"]; ok {
 		t.EmptyObject = true // Mark that "properties" key was present.
 		if propsMap, ok := props.(map[string]any); ok {
@@ -1208,11 +1208,11 @@ func extractSchemaObjectFields(t *TSType, schema map[string]any) {
 				names = append(names, name)
 			}
 			sort.Strings(names)
-			t.Properties = make([]TSProperty, 0, len(names))
+			t.Properties = make([]tsProperty, 0, len(names))
 			for _, name := range names {
 				propSchema := propsMap[name]
 				if propMap, ok := propSchema.(map[string]any); ok {
-					t.Properties = append(t.Properties, TSProperty{
+					t.Properties = append(t.Properties, tsProperty{
 						Name:   name,
 						Schema: schemaMapToTSType(propMap),
 					})
@@ -1239,7 +1239,7 @@ func extractSchemaObjectFields(t *TSType, schema map[string]any) {
 	if pp, ok := schema["patternProperties"].(map[string]any); ok {
 		for pattern, propSchema := range pp {
 			if propMap, ok := propSchema.(map[string]any); ok {
-				t.PatternProperties = append(t.PatternProperties, TSPatternProperty{
+				t.PatternProperties = append(t.PatternProperties, tsPatternProperty{
 					Pattern: pattern,
 					Schema:  schemaMapToTSType(propMap),
 				})
@@ -1250,28 +1250,28 @@ func extractSchemaObjectFields(t *TSType, schema map[string]any) {
 	extractSchemaExtraFields(t, schema)
 }
 
-// extractSchemaArrayFields populates array-specific fields on a TSType.
-func extractSchemaArrayFields(t *TSType, schema map[string]any) {
+// extractSchemaArrayFields populates array-specific fields on a tsType.
+func extractSchemaArrayFields(t *tsType, schema map[string]any) {
 	items := schema["items"]
 	switch itemsVal := items.(type) {
 	case map[string]any:
 		// Homogeneous array.
-		t.Kind = TSTypeArray
+		t.Kind = tsTypeArray
 		t.Items = schemaMapToTSType(itemsVal)
 	case []any:
 		// Tuple.
-		t.Kind = TSTypeTuple
-		t.TupleItems = make([]*TSType, len(itemsVal))
+		t.Kind = tsTypeTuple
+		t.TupleItems = make([]*tsType, len(itemsVal))
 		for i, item := range itemsVal {
 			if itemMap, ok := item.(map[string]any); ok {
 				t.TupleItems[i] = schemaMapToTSType(itemMap)
 			} else {
-				t.TupleItems[i] = &TSType{Kind: TSTypeAny}
+				t.TupleItems[i] = &tsType{Kind: tsTypeAny}
 			}
 		}
 	default:
 		// Array with no items specified.
-		t.Kind = TSTypeArray
+		t.Kind = tsTypeArray
 	}
 
 	if mi, ok := schema["minItems"]; ok {
@@ -1290,8 +1290,8 @@ func extractSchemaArrayFields(t *TSType, schema map[string]any) {
 }
 
 // extractSchemaAnnotations pulls annotation fields from a schema map.
-func extractSchemaAnnotations(schema map[string]any) *TSAnnotations {
-	ann := &TSAnnotations{}
+func extractSchemaAnnotations(schema map[string]any) *tsAnnotations {
+	ann := &tsAnnotations{}
 	if v, ok := schema["description"].(string); ok {
 		ann.Description = v
 	}
@@ -1312,7 +1312,7 @@ func extractSchemaAnnotations(schema map[string]any) *TSAnnotations {
 }
 
 // extractSchemaExtraFields copies non-standard schema fields into ExtraFields.
-func extractSchemaExtraFields(t *TSType, schema map[string]any) {
+func extractSchemaExtraFields(t *tsType, schema map[string]any) {
 	for k, v := range schema {
 		if isStandardSchemaKey(k) {
 			continue
@@ -1324,7 +1324,7 @@ func extractSchemaExtraFields(t *TSType, schema map[string]any) {
 	}
 }
 
-// isStandardSchemaKey returns true for keys that are handled by named TSType
+// isStandardSchemaKey returns true for keys that are handled by named tsType
 // fields (and thus should not be duplicated into ExtraFields).
 func isStandardSchemaKey(k string) bool {
 	switch k {

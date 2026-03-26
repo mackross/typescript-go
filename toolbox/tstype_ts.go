@@ -7,18 +7,14 @@ import (
 	"unicode"
 )
 
-// ToTS renders the TSType tree back to TypeScript source text.
-func (t *TSType) ToTS() string { return TSTypeToTS(t) }
 
-// ToTS renders the TSFuncSig as a TypeScript function type expression.
-func (sig *TSFuncSig) ToTS() string { return TSFuncSigToTS(sig) }
 
-// TSTypeToTS renders a TSType tree back to TypeScript source text.
+// tsTypeToTS renders a tsType tree back to TypeScript source text.
 // The output is semantically equivalent to the original type, though
 // not necessarily character-for-character identical.
 //
 // This function does NOT depend on the checker or any internal/ packages.
-func TSTypeToTS(t *TSType) string {
+func tsTypeToTS(t *tsType) string {
 	if t == nil {
 		return "any"
 	}
@@ -29,11 +25,11 @@ func TSTypeToTS(t *TSType) string {
 	return core
 }
 
-// TSTypeDeclarationsToTS emits type alias declarations for all definitions
-// in the TSType.  Each definition is rendered as "type Foo = ...;\n".
+// tsTypeDeclarationsToTS emits type alias declarations for all definitions
+// in the tsType.  Each definition is rendered as "type Foo = ...;\n".
 // Definition names are sanitized to valid TypeScript identifiers.
 // Returns an empty string when there are no definitions.
-func TSTypeDeclarationsToTS(t *TSType) string {
+func tsTypeDeclarationsToTS(t *tsType) string {
 	if t == nil || len(t.Definitions) == 0 {
 		return ""
 	}
@@ -51,7 +47,7 @@ func TSTypeDeclarationsToTS(t *TSType) string {
 		sb.WriteString("type ")
 		sb.WriteString(sanitized)
 		sb.WriteString(" = ")
-		sb.WriteString(TSTypeToTS(def))
+		sb.WriteString(tsTypeToTS(def))
 		sb.WriteString(";\n")
 	}
 	return sb.String()
@@ -80,12 +76,12 @@ func sanitizeTSIdentifier(name string) string {
 }
 
 // tsTypeToTSCore renders the core type without nullable handling.
-func tsTypeToTSCore(t *TSType) string {
+func tsTypeToTSCore(t *tsType) string {
 	switch t.Kind {
-	case TSTypeAny:
+	case tsTypeAny:
 		return "any"
 
-	case TSTypePrimitive:
+	case tsTypePrimitive:
 		// Handle multi-type primitives stored in ExtraFields (e.g. string | number).
 		if t.ExtraFields != nil {
 			if multiType, ok := t.ExtraFields["type"].([]any); ok {
@@ -103,10 +99,10 @@ func tsTypeToTSCore(t *TSType) string {
 		}
 		return mapPrimitiveToTS(t.PrimitiveType)
 
-	case TSTypeLiteral:
+	case tsTypeLiteral:
 		return renderLiteral(t.LiteralValue)
 
-	case TSTypeRef:
+	case tsTypeRef:
 		if isExternalRef(t.Ref) {
 			// External $ref (e.g. "http://my-schema.org") cannot be
 			// represented as a TS type name.  Render as "any"; the
@@ -121,25 +117,25 @@ func tsTypeToTSCore(t *TSType) string {
 		}
 		return sanitizeTSIdentifier(ref)
 
-	case TSTypeObject:
+	case tsTypeObject:
 		return renderObject(t)
 
-	case TSTypeArray:
+	case tsTypeArray:
 		return renderArray(t)
 
-	case TSTypeTuple:
+	case tsTypeTuple:
 		return renderTuple(t)
 
-	case TSTypeUnion:
+	case tsTypeUnion:
 		return renderUnion(t)
 
-	case TSTypeIntersection:
+	case tsTypeIntersection:
 		return renderIntersection(t)
 
-	case TSTypeEnum:
+	case tsTypeEnum:
 		return renderEnum(t)
 
-	case TSTypeTemplateLiteral:
+	case tsTypeTemplateLiteral:
 		// Template literal types have a pattern; represent as string
 		return "string"
 
@@ -192,8 +188,8 @@ func isExternalRef(ref string) bool {
 	return ref != "" && !strings.HasPrefix(ref, "#")
 }
 
-// renderObject renders a TSTypeObject as TypeScript source text.
-func renderObject(t *TSType) string {
+// renderObject renders a tsTypeObject as TypeScript source text.
+func renderObject(t *tsType) string {
 	if t.WildcardObject {
 		return "Record<string, any>"
 	}
@@ -210,7 +206,7 @@ func renderObject(t *TSType) string {
 	// when they appear on a preceding line.
 	hasJSDoc := false
 	for _, prop := range t.Properties {
-		if prop.Schema != nil && prop.Schema.Kind == TSTypeRef && isExternalRef(prop.Schema.Ref) {
+		if prop.Schema != nil && prop.Schema.Kind == tsTypeRef && isExternalRef(prop.Schema.Ref) {
 			hasJSDoc = true
 			break
 		}
@@ -222,8 +218,8 @@ func renderObject(t *TSType) string {
 		if !reqSet[prop.Name] {
 			optional = "?"
 		}
-		propType := TSTypeToTS(prop.Schema)
-		if hasJSDoc && prop.Schema != nil && prop.Schema.Kind == TSTypeRef && isExternalRef(prop.Schema.Ref) {
+		propType := tsTypeToTS(prop.Schema)
+		if hasJSDoc && prop.Schema != nil && prop.Schema.Kind == tsTypeRef && isExternalRef(prop.Schema.Ref) {
 			// Multi-line JSDoc annotation before the property.
 			parts = append(parts, fmt.Sprintf("/** @$ref %s */\n%s%s: %s", prop.Schema.Ref, prop.Name, optional, propType))
 		} else {
@@ -233,13 +229,13 @@ func renderObject(t *TSType) string {
 
 	// Handle index signatures from AdditionalProperties.
 	if t.AdditionalProperties != nil {
-		valType := TSTypeToTS(t.AdditionalProperties)
+		valType := tsTypeToTS(t.AdditionalProperties)
 		parts = append(parts, fmt.Sprintf("[key: string]: %s", valType))
 	}
 
 	// Handle pattern properties (numeric index, etc.)
 	for _, pp := range t.PatternProperties {
-		valType := TSTypeToTS(pp.Schema)
+		valType := tsTypeToTS(pp.Schema)
 		// Numeric pattern (^[0-9]+$) → [key: number]
 		if pp.Pattern == "^[0-9]+$" {
 			parts = append(parts, fmt.Sprintf("[key: number]: %s", valType))
@@ -258,12 +254,12 @@ func renderObject(t *TSType) string {
 	return "{ " + strings.Join(parts, "; ") + " }"
 }
 
-// renderArray renders a TSTypeArray as TypeScript source text.
-func renderArray(t *TSType) string {
+// renderArray renders a tsTypeArray as TypeScript source text.
+func renderArray(t *tsType) string {
 	if t.Items == nil {
 		return "any[]"
 	}
-	elemType := TSTypeToTS(t.Items)
+	elemType := tsTypeToTS(t.Items)
 	// Use Array<T> for complex element types (unions, intersections,
 	// nullable, or multi-type primitives).
 	if needsArrayGenericForm(t.Items) || strings.Contains(elemType, "|") || strings.Contains(elemType, "&") {
@@ -274,11 +270,11 @@ func renderArray(t *TSType) string {
 
 // needsArrayGenericForm returns true if the element type should use
 // Array<T> form instead of T[] form.
-func needsArrayGenericForm(t *TSType) bool {
+func needsArrayGenericForm(t *tsType) bool {
 	if t == nil {
 		return false
 	}
-	if t.Kind == TSTypeUnion || t.Kind == TSTypeIntersection || t.Nullable {
+	if t.Kind == tsTypeUnion || t.Kind == tsTypeIntersection || t.Nullable {
 		return true
 	}
 	// Multi-type primitives stored in ExtraFields (e.g. string | number).
@@ -290,8 +286,8 @@ func needsArrayGenericForm(t *TSType) bool {
 	return false
 }
 
-// renderTuple renders a TSTypeTuple as TypeScript source text.
-func renderTuple(t *TSType) string {
+// renderTuple renders a tsTypeTuple as TypeScript source text.
+func renderTuple(t *tsType) string {
 	if len(t.TupleItems) == 0 && t.AdditionalItems == nil {
 		return "[]"
 	}
@@ -304,7 +300,7 @@ func renderTuple(t *TSType) string {
 
 	var parts []string
 	for i, item := range t.TupleItems {
-		elemType := TSTypeToTS(item)
+		elemType := tsTypeToTS(item)
 		if i >= minItems {
 			// Optional tuple element
 			elemType += "?"
@@ -318,7 +314,7 @@ func renderTuple(t *TSType) string {
 	// the number of tuple items AND the additional items type is a union
 	// of the tuple item types (catch-all pattern).
 	if t.AdditionalItems != nil && !isAdditionalItemsCatchAll(t) {
-		restType := TSTypeToTS(t.AdditionalItems)
+		restType := tsTypeToTS(t.AdditionalItems)
 		// Wrap complex types in parens before adding []
 		if needsArrayGenericForm(t.AdditionalItems) || strings.Contains(restType, "|") || strings.Contains(restType, "&") {
 			parts = append(parts, "...Array<"+restType+">")
@@ -333,7 +329,7 @@ func renderTuple(t *TSType) string {
 // isAdditionalItemsCatchAll returns true when the AdditionalItems on a tuple
 // is just a union of all the tuple item types (JSON Schema catch-all pattern,
 // not a genuine rest element).
-func isAdditionalItemsCatchAll(t *TSType) bool {
+func isAdditionalItemsCatchAll(t *tsType) bool {
 	if t.AdditionalItems == nil || len(t.TupleItems) == 0 {
 		return false
 	}
@@ -348,14 +344,14 @@ func isAdditionalItemsCatchAll(t *TSType) bool {
 	// If AdditionalItems is a union, check if it's the union of all tuple
 	// item types (catch-all pattern).
 	ai := t.AdditionalItems
-	if ai.Kind == TSTypeUnion && len(ai.Types) == len(t.TupleItems) {
+	if ai.Kind == tsTypeUnion && len(ai.Types) == len(t.TupleItems) {
 		// Quick check: each union branch matches a tuple item type.
 		tupleTypes := make(map[string]bool, len(t.TupleItems))
 		for _, item := range t.TupleItems {
-			tupleTypes[TSTypeToTS(item)] = true
+			tupleTypes[tsTypeToTS(item)] = true
 		}
 		for _, branch := range ai.Types {
-			if !tupleTypes[TSTypeToTS(branch)] {
+			if !tupleTypes[tsTypeToTS(branch)] {
 				return false
 			}
 		}
@@ -363,14 +359,14 @@ func isAdditionalItemsCatchAll(t *TSType) bool {
 	}
 	// Single type AdditionalItems where there's exactly one tuple item type
 	// and they match.
-	if len(t.TupleItems) == 1 && TSTypeToTS(ai) == TSTypeToTS(t.TupleItems[0]) {
+	if len(t.TupleItems) == 1 && tsTypeToTS(ai) == tsTypeToTS(t.TupleItems[0]) {
 		return true
 	}
 	return false
 }
 
-// renderUnion renders a TSTypeUnion as TypeScript source text.
-func renderUnion(t *TSType) string {
+// renderUnion renders a tsTypeUnion as TypeScript source text.
+func renderUnion(t *tsType) string {
 	if len(t.Types) == 0 {
 		return "never"
 	}
@@ -382,9 +378,9 @@ func renderUnion(t *TSType) string {
 
 	parts := make([]string, len(t.Types))
 	for i, branch := range t.Types {
-		part := TSTypeToTS(branch)
+		part := tsTypeToTS(branch)
 		// Wrap intersection types in parens when inside a union.
-		if branch.Kind == TSTypeIntersection {
+		if branch.Kind == tsTypeIntersection {
 			part = "(" + part + ")"
 		}
 		parts[i] = part
@@ -393,24 +389,24 @@ func renderUnion(t *TSType) string {
 }
 
 // renderCollapsedLiteralUnion handles unions of literals (CollapseLiterals=true).
-func renderCollapsedLiteralUnion(t *TSType) string {
+func renderCollapsedLiteralUnion(t *tsType) string {
 	parts := make([]string, len(t.Types))
 	for i, branch := range t.Types {
-		parts[i] = TSTypeToTS(branch)
+		parts[i] = tsTypeToTS(branch)
 	}
 	return strings.Join(parts, " | ")
 }
 
-// renderIntersection renders a TSTypeIntersection as TypeScript source text.
-func renderIntersection(t *TSType) string {
+// renderIntersection renders a tsTypeIntersection as TypeScript source text.
+func renderIntersection(t *tsType) string {
 	if len(t.Types) == 0 {
 		return "unknown"
 	}
 	parts := make([]string, len(t.Types))
 	for i, branch := range t.Types {
-		part := TSTypeToTS(branch)
+		part := tsTypeToTS(branch)
 		// Wrap union types in parens when inside an intersection.
-		if branch.Kind == TSTypeUnion {
+		if branch.Kind == tsTypeUnion {
 			part = "(" + part + ")"
 		}
 		parts[i] = part
@@ -418,8 +414,8 @@ func renderIntersection(t *TSType) string {
 	return strings.Join(parts, " & ")
 }
 
-// renderEnum renders a TSTypeEnum as a union of literal values.
-func renderEnum(t *TSType) string {
+// renderEnum renders a tsTypeEnum as a union of literal values.
+func renderEnum(t *tsType) string {
 	if len(t.EnumValues) == 0 {
 		return "never"
 	}
@@ -430,11 +426,11 @@ func renderEnum(t *TSType) string {
 	return strings.Join(parts, " | ")
 }
 
-// TSFuncSigToTS renders a TSFuncSig as a TypeScript function type expression.
+// tsFuncSigToTS renders a tsFuncSig as a TypeScript function type expression.
 // Example output: (channelID: string, payload: { text: string }) => void
 //
 // This function does NOT depend on the checker or any internal/ packages.
-func TSFuncSigToTS(sig *TSFuncSig) string {
+func tsFuncSigToTS(sig *tsFuncSig) string {
 	if sig == nil {
 		return "() => void"
 	}
@@ -443,14 +439,14 @@ func TSFuncSigToTS(sig *TSFuncSig) string {
 	for i, p := range sig.Params {
 		paramType := "any"
 		if p.Type != nil {
-			paramType = TSTypeToTS(p.Type)
+			paramType = tsTypeToTS(p.Type)
 		}
 		params[i] = p.Name + ": " + paramType
 	}
 
 	retStr := "void"
 	if sig.ReturnType != nil {
-		retStr = TSTypeToTS(sig.ReturnType)
+		retStr = tsTypeToTS(sig.ReturnType)
 	}
 
 	return "(" + strings.Join(params, ", ") + ") => " + retStr

@@ -1,24 +1,8 @@
 package toolbox
 
-// ParamsType is a facade that hides TSType internals behind a clean public API.
+// ParamsType is a facade that hides tsType internals behind a clean public API.
 type ParamsType struct {
-	inner *TSType
-}
-
-// NewParamsType wraps an existing TSType in the facade.
-func NewParamsType(t *TSType) *ParamsType {
-	if t == nil {
-		return nil
-	}
-	return &ParamsType{inner: t}
-}
-
-// Inner returns the underlying TSType.  Use sparingly; prefer facade methods.
-func (t *ParamsType) Inner() *TSType {
-	if t == nil {
-		return nil
-	}
-	return t.inner
+	inner *tsType
 }
 
 // --- Rendering ---
@@ -28,7 +12,7 @@ func (t *ParamsType) ToJSONSchema() map[string]any {
 	if t == nil || t.inner == nil {
 		return map[string]any{}
 	}
-	return TSTypeToJSON(t.inner)
+	return tsTypeToJSON(t.inner)
 }
 
 // ToTS renders the type as TypeScript source text.
@@ -36,7 +20,7 @@ func (t *ParamsType) ToTS() string {
 	if t == nil || t.inner == nil {
 		return "any"
 	}
-	return TSTypeToTS(t.inner)
+	return tsTypeToTS(t.inner)
 }
 
 // Declarations emits type alias declarations for all definitions
@@ -46,7 +30,7 @@ func (t *ParamsType) Declarations() string {
 	if t == nil || t.inner == nil {
 		return ""
 	}
-	return TSTypeDeclarationsToTS(t.inner)
+	return tsTypeDeclarationsToTS(t.inner)
 }
 
 // --- Inspection ---
@@ -54,7 +38,7 @@ func (t *ParamsType) Declarations() string {
 // PropertyNames returns the names of all properties on an object type.
 // Returns nil for non-object types.
 func (t *ParamsType) PropertyNames() []string {
-	if t == nil || t.inner == nil || t.inner.Kind != TSTypeObject {
+	if t == nil || t.inner == nil || t.inner.Kind != tsTypeObject {
 		return nil
 	}
 	names := make([]string, len(t.inner.Properties))
@@ -67,7 +51,7 @@ func (t *ParamsType) PropertyNames() []string {
 // HasProperty reports whether the type has a property with the given name.
 // Returns false for non-object types.
 func (t *ParamsType) HasProperty(name string) bool {
-	if t == nil || t.inner == nil || t.inner.Kind != TSTypeObject {
+	if t == nil || t.inner == nil || t.inner.Kind != tsTypeObject {
 		return false
 	}
 	for _, p := range t.inner.Properties {
@@ -83,7 +67,7 @@ func (t *ParamsType) IsObject() bool {
 	if t == nil || t.inner == nil {
 		return false
 	}
-	return t.inner.Kind == TSTypeObject
+	return t.inner.Kind == tsTypeObject
 }
 
 // --- Manipulation (returns new copies) ---
@@ -99,11 +83,11 @@ func (t *ParamsType) RemoveProperties(names ...string) *ParamsType {
 		remove[n] = true
 	}
 
-	// Shallow copy the inner TSType.
+	// Shallow copy the inner tsType.
 	cp := *t.inner
 
 	// Filter properties.
-	filtered := make([]TSProperty, 0, len(cp.Properties))
+	filtered := make([]tsProperty, 0, len(cp.Properties))
 	for _, p := range cp.Properties {
 		if !remove[p.Name] {
 			filtered = append(filtered, p)
@@ -132,29 +116,29 @@ func (t *ParamsType) SetPropertyLiteral(name string, value any) *ParamsType {
 		return t
 	}
 
-	// Shallow copy the inner TSType.
+	// Shallow copy the inner tsType.
 	cp := *t.inner
 
 	primType := inferPrimitiveType(value)
-	litType := &TSType{
-		Kind:          TSTypeLiteral,
+	litType := &tsType{
+		Kind:          tsTypeLiteral,
 		LiteralValue:  value,
 		PrimitiveType: primType,
 	}
 
 	// Copy properties, replacing the matching one.
-	newProps := make([]TSProperty, len(cp.Properties))
+	newProps := make([]tsProperty, len(cp.Properties))
 	copy(newProps, cp.Properties)
 	found := false
 	for i, p := range newProps {
 		if p.Name == name {
-			newProps[i] = TSProperty{Name: name, Schema: litType}
+			newProps[i] = tsProperty{Name: name, Schema: litType}
 			found = true
 			break
 		}
 	}
 	if !found {
-		newProps = append(newProps, TSProperty{Name: name, Schema: litType})
+		newProps = append(newProps, tsProperty{Name: name, Schema: litType})
 	}
 	cp.Properties = newProps
 
@@ -168,27 +152,27 @@ func (t *ParamsType) SetPropertyType(name string, typ *ParamsType) *ParamsType {
 		return t
 	}
 
-	// Shallow copy the inner TSType.
+	// Shallow copy the inner tsType.
 	cp := *t.inner
 
-	var schema *TSType
+	var schema *tsType
 	if typ != nil {
 		schema = typ.inner
 	}
 
 	// Copy properties, replacing the matching one.
-	newProps := make([]TSProperty, len(cp.Properties))
+	newProps := make([]tsProperty, len(cp.Properties))
 	copy(newProps, cp.Properties)
 	found := false
 	for i, p := range newProps {
 		if p.Name == name {
-			newProps[i] = TSProperty{Name: name, Schema: schema}
+			newProps[i] = tsProperty{Name: name, Schema: schema}
 			found = true
 			break
 		}
 	}
 	if !found {
-		newProps = append(newProps, TSProperty{Name: name, Schema: schema})
+		newProps = append(newProps, tsProperty{Name: name, Schema: schema})
 	}
 	cp.Properties = newProps
 
@@ -209,29 +193,22 @@ func inferPrimitiveType(v any) string {
 	}
 }
 
+
+// wrapParamsType wraps a tsType in a ParamsType facade.
+func wrapParamsType(t *tsType) *ParamsType {
+	if t == nil {
+		return nil
+	}
+	return &ParamsType{inner: t}
+}
+
 // ---------------------------------------------------------------------------
 // FuncSig facade
 // ---------------------------------------------------------------------------
 
-// FuncSig is a facade that hides TSFuncSig internals behind a clean public API.
+// FuncSig is a facade that hides tsFuncSig internals behind a clean public API.
 type FuncSig struct {
-	inner *TSFuncSig
-}
-
-// NewFuncSig wraps an existing TSFuncSig in the facade.
-func NewFuncSig(sig *TSFuncSig) *FuncSig {
-	if sig == nil {
-		return nil
-	}
-	return &FuncSig{inner: sig}
-}
-
-// Inner returns the underlying TSFuncSig.
-func (f *FuncSig) Inner() *TSFuncSig {
-	if f == nil {
-		return nil
-	}
-	return f.inner
+	inner *tsFuncSig
 }
 
 // Description returns the function's JSDoc description.
@@ -263,7 +240,7 @@ func (f *FuncSig) Params() []FuncParam {
 	for i, p := range f.inner.Params {
 		out[i] = FuncParam{
 			name: p.Name,
-			typ:  NewParamsType(p.Type),
+			typ:  wrapParamsType(p.Type),
 		}
 	}
 	return out
@@ -282,7 +259,7 @@ func (f *FuncSig) ToTS() string {
 	if f == nil || f.inner == nil {
 		return "() => void"
 	}
-	return TSFuncSigToTS(f.inner)
+	return tsFuncSigToTS(f.inner)
 }
 
 // ToJSONSchema converts the first parameter's type to a JSON Schema map.
@@ -290,5 +267,5 @@ func (f *FuncSig) ToJSONSchema() map[string]any {
 	if f == nil || f.inner == nil {
 		return nil
 	}
-	return TSFuncSigToJSON(f.inner)
+	return tsFuncSigToJSON(f.inner)
 }

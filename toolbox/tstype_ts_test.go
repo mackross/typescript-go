@@ -12,17 +12,17 @@ import (
 )
 
 // tsTypeCanonicalKey returns a string key for sorting union members.
-func tsTypeCanonicalKey(t *TSType) string {
+func tsTypeCanonicalKey(t *tsType) string {
 	if t == nil {
 		return ""
 	}
-	// Use TSTypeToTS as a canonical representation.
-	return TSTypeToTS(t)
+	// Use tsTypeToTS as a canonical representation.
+	return tsTypeToTS(t)
 }
 
 // normalizeTSType returns a deep copy of t with inconsequential differences
 // removed so that reflect.DeepEqual / go-cmp can compare original and
-// re-parsed TSType trees.
+// re-parsed tsType trees.
 //
 // Normalizations applied:
 //   - nil vs empty slices: nil and len-0 slices are treated as equivalent
@@ -37,7 +37,7 @@ func tsTypeCanonicalKey(t *TSType) string {
 //   - Definitions: inlined — all $ref pointers are resolved to their
 //     definition bodies so that definition-name differences between
 //     original and re-parsed trees are eliminated.
-func normalizeTSType(t *TSType) *TSType {
+func normalizeTSType(t *tsType) *tsType {
 	if t == nil {
 		return nil
 	}
@@ -54,7 +54,7 @@ func normalizeTSType(t *TSType) *TSType {
 }
 
 // normalizeTSTypeCore does the core normalization without definition inlining.
-func normalizeTSTypeCore(t *TSType) *TSType {
+func normalizeTSTypeCore(t *tsType) *tsType {
 	if t == nil {
 		return nil
 	}
@@ -69,7 +69,7 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 	// inlineDefinitions performs this stripping for definition refs, but
 	// external refs (which are not in definitions) need the same treatment
 	// so that the original and re-parsed Ref values match.
-	if out.Kind == TSTypeRef && out.Ref != "" {
+	if out.Kind == tsTypeRef && out.Ref != "" {
 		if idx := strings.LastIndex(out.Ref, "/"); idx >= 0 {
 			out.Ref = out.Ref[idx+1:]
 		}
@@ -77,7 +77,7 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 
 	// Handle multi-type primitives from ExtraFields before stripping.
 	// Multi-type: {"type": ["string", "null"]} → PrimitiveType="string", Nullable=true
-	if out.Kind == TSTypePrimitive && out.ExtraFields != nil {
+	if out.Kind == tsTypePrimitive && out.ExtraFields != nil {
 		if multiType, ok := out.ExtraFields["type"].([]any); ok {
 			var nonNull []string
 			hasNull := false
@@ -97,10 +97,10 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 				out.PrimitiveType = nonNull[0]
 			} else if len(nonNull) > 1 {
 				// Multi-type primitive → union
-				out.Kind = TSTypeUnion
-				types := make([]*TSType, len(nonNull))
+				out.Kind = tsTypeUnion
+				types := make([]*tsType, len(nonNull))
 				for i, pt := range nonNull {
-					types[i] = &TSType{Kind: TSTypePrimitive, PrimitiveType: pt}
+					types[i] = &tsType{Kind: tsTypePrimitive, PrimitiveType: pt}
 				}
 				out.Types = types
 			}
@@ -118,7 +118,7 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 	// Strip generator-option-dependent fields.
 	out.AdditionalPropertiesBool = nil
 	// Required is populated only when the generator's opts.Required is true.
-	// TSTypeToTS encodes optionality via ? markers, so Required cannot
+	// tsTypeToTS encodes optionality via ? markers, so Required cannot
 	// survive a round-trip through TS text when the re-parser uses
 	// DefaultOptions() (Required=false).  Strip it for comparison.
 	out.Required = nil
@@ -142,14 +142,14 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 		out.PrimitiveType = "number"
 	}
 
-	// Normalize TSTypeEnum → TSTypeUnion of TSTypeLiteral.
-	// TSTypeEnum with EnumValues is rendered as a union of literals,
-	// which re-parses as a TSTypeUnion of TSTypeLiteral. Normalize
+	// Normalize tsTypeEnum → tsTypeUnion of tsTypeLiteral.
+	// tsTypeEnum with EnumValues is rendered as a union of literals,
+	// which re-parses as a tsTypeUnion of tsTypeLiteral. Normalize
 	// to the union form for comparison.
-	if out.Kind == TSTypeEnum && len(out.EnumValues) > 0 {
-		types := make([]*TSType, len(out.EnumValues))
+	if out.Kind == tsTypeEnum && len(out.EnumValues) > 0 {
+		types := make([]*tsType, len(out.EnumValues))
 		for i, v := range out.EnumValues {
-			lit := &TSType{Kind: TSTypeLiteral, LiteralValue: v}
+			lit := &tsType{Kind: tsTypeLiteral, LiteralValue: v}
 			switch v.(type) {
 			case string:
 				lit.PrimitiveType = "string"
@@ -160,34 +160,34 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 			}
 			types[i] = lit
 		}
-		out.Kind = TSTypeUnion
+		out.Kind = tsTypeUnion
 		out.Types = types
 		out.EnumValues = nil
 	}
 
 	// Normalize null literal → null primitive.
-	// Original extraction may produce TSTypeLiteral with LiteralValue=nil,
-	// while re-parsing produces TSTypePrimitive with PrimitiveType="null".
-	if out.Kind == TSTypeLiteral && out.LiteralValue == nil {
-		out.Kind = TSTypePrimitive
+	// Original extraction may produce tsTypeLiteral with LiteralValue=nil,
+	// while re-parsing produces tsTypePrimitive with PrimitiveType="null".
+	if out.Kind == tsTypeLiteral && out.LiteralValue == nil {
+		out.Kind = tsTypePrimitive
 		out.PrimitiveType = "null"
 	}
 
 	// Strip PrimitiveType on unions/intersections — it's a schema artifact
 	// that doesn't survive round-trip.
-	if out.Kind == TSTypeUnion || out.Kind == TSTypeIntersection {
+	if out.Kind == tsTypeUnion || out.Kind == tsTypeIntersection {
 		out.PrimitiveType = ""
 	}
 
-	// Normalize nullable: TSTypeToTS renders Nullable as "T | null",
+	// Normalize nullable: tsTypeToTS renders Nullable as "T | null",
 	// which re-parses differently depending on the extraction path.
 	// Normalize by stripping Nullable and removing null from unions,
 	// since the TS text faithfully represents nullability via "| null".
 	out.Nullable = false
-	if out.Kind == TSTypeUnion && len(out.Types) > 0 {
-		var nonNull []*TSType
+	if out.Kind == tsTypeUnion && len(out.Types) > 0 {
+		var nonNull []*tsType
 		for _, branch := range out.Types {
-			if branch != nil && branch.Kind == TSTypePrimitive && branch.PrimitiveType == "null" {
+			if branch != nil && branch.Kind == tsTypePrimitive && branch.PrimitiveType == "null" {
 				continue
 			}
 			nonNull = append(nonNull, branch)
@@ -199,7 +199,7 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 				collapsed := *nonNull[0]
 				out = collapsed
 			} else if len(nonNull) == 0 {
-				out.Kind = TSTypePrimitive
+				out.Kind = tsTypePrimitive
 				out.PrimitiveType = "null"
 				out.Types = nil
 			} else {
@@ -211,9 +211,9 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 	// Recursively normalize children.
 	if out.Items != nil {
 		normalized := normalizeTSTypeCore(out.Items)
-		// Normalize Items: &TSType{Kind: TSTypeAny} → nil for arrays.
+		// Normalize Items: &tsType{Kind: tsTypeAny} → nil for arrays.
 		// Both mean "any element type".
-		if normalized.Kind == TSTypeAny && normalized.PrimitiveType == "" &&
+		if normalized.Kind == tsTypeAny && normalized.PrimitiveType == "" &&
 			len(normalized.Properties) == 0 && len(normalized.Types) == 0 &&
 			!normalized.Nullable {
 			out.Items = nil
@@ -226,7 +226,7 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 	}
 	if out.AdditionalItems != nil {
 		// Strip catch-all AdditionalItems on tuples (JSON Schema artifact).
-		if out.Kind == TSTypeTuple && isAdditionalItemsCatchAll(&out) {
+		if out.Kind == tsTypeTuple && isAdditionalItemsCatchAll(&out) {
 			out.AdditionalItems = nil
 		} else {
 			out.AdditionalItems = normalizeTSTypeCore(out.AdditionalItems)
@@ -234,9 +234,9 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 	}
 
 	if len(out.Properties) > 0 {
-		props := make([]TSProperty, len(out.Properties))
+		props := make([]tsProperty, len(out.Properties))
 		for i, p := range out.Properties {
-			props[i] = TSProperty{Name: p.Name, Schema: normalizeTSTypeCore(p.Schema)}
+			props[i] = tsProperty{Name: p.Name, Schema: normalizeTSTypeCore(p.Schema)}
 		}
 		// Sort properties by name for consistent comparison.
 		sort.SliceStable(props, func(i, j int) bool {
@@ -248,9 +248,9 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 	}
 
 	if len(out.PatternProperties) > 0 {
-		pp := make([]TSPatternProperty, len(out.PatternProperties))
+		pp := make([]tsPatternProperty, len(out.PatternProperties))
 		for i, p := range out.PatternProperties {
-			pp[i] = TSPatternProperty{Pattern: p.Pattern, Schema: normalizeTSTypeCore(p.Schema)}
+			pp[i] = tsPatternProperty{Pattern: p.Pattern, Schema: normalizeTSTypeCore(p.Schema)}
 		}
 		out.PatternProperties = pp
 	} else {
@@ -258,7 +258,7 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 	}
 
 	if len(out.TupleItems) > 0 {
-		items := make([]*TSType, len(out.TupleItems))
+		items := make([]*tsType, len(out.TupleItems))
 		for i, item := range out.TupleItems {
 			items[i] = normalizeTSTypeCore(item)
 		}
@@ -268,12 +268,12 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 	}
 
 	if len(out.Types) > 0 {
-		types := make([]*TSType, 0, len(out.Types))
+		types := make([]*tsType, 0, len(out.Types))
 		for _, typ := range out.Types {
 			normalized := normalizeTSTypeCore(typ)
-			// Flatten nested unions: TSTypeUnion{TSTypeUnion{a,b}, c}
-			// → TSTypeUnion{a, b, c}
-			if normalized != nil && normalized.Kind == TSTypeUnion && out.Kind == TSTypeUnion && !normalized.Nullable {
+			// Flatten nested unions: tsTypeUnion{tsTypeUnion{a,b}, c}
+			// → tsTypeUnion{a, b, c}
+			if normalized != nil && normalized.Kind == tsTypeUnion && out.Kind == tsTypeUnion && !normalized.Nullable {
 				types = append(types, normalized.Types...)
 			} else {
 				types = append(types, normalized)
@@ -281,7 +281,7 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 		}
 		// Sort union members by canonical key to handle order differences
 		// between original extraction and re-parsing.
-		if out.Kind == TSTypeUnion {
+		if out.Kind == tsTypeUnion {
 			sort.SliceStable(types, func(i, j int) bool {
 				return tsTypeCanonicalKey(types[i]) < tsTypeCanonicalKey(types[j])
 			})
@@ -291,9 +291,9 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 		out.Types = nil
 	}
 
-	// Unwrap single-element unions: TSTypeUnion{x} → x.
+	// Unwrap single-element unions: tsTypeUnion{x} → x.
 	// A single-element union is semantically identical to the element.
-	if out.Kind == TSTypeUnion && len(out.Types) == 1 {
+	if out.Kind == tsTypeUnion && len(out.Types) == 1 {
 		collapsed := *out.Types[0]
 		out = collapsed
 	}
@@ -303,7 +303,7 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 	}
 
 	if len(out.Definitions) > 0 {
-		defs := make(map[string]*TSType, len(out.Definitions))
+		defs := make(map[string]*tsType, len(out.Definitions))
 		for k, v := range out.Definitions {
 			defs[k] = normalizeTSTypeCore(v)
 		}
@@ -317,28 +317,28 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 
 // inlineDefinitions resolves all $ref pointers by replacing them with the
 // referenced definition body.  Recursive references are replaced with a
-// canonical TSTypeAny to break cycles.
-func inlineDefinitions(root *TSType) *TSType {
+// canonical tsTypeAny to break cycles.
+func inlineDefinitions(root *tsType) *tsType {
 	if root == nil || len(root.Definitions) == 0 {
 		return root
 	}
 	defs := root.Definitions
 	resolving := map[string]bool{} // cycle detection
-	resolved := map[string]*TSType{}
+	resolved := map[string]*tsType{}
 
-	var resolve func(t *TSType) *TSType
-	resolve = func(t *TSType) *TSType {
+	var resolve func(t *tsType) *tsType
+	resolve = func(t *tsType) *tsType {
 		if t == nil {
 			return nil
 		}
-		if t.Kind == TSTypeRef {
+		if t.Kind == tsTypeRef {
 			name := t.Ref
 			if idx := strings.LastIndex(name, "/"); idx >= 0 {
 				name = name[idx+1:]
 			}
 			if resolving[name] {
 				// Cycle: replace with any (recursive type).
-				return &TSType{Kind: TSTypeAny, Nullable: t.Nullable}
+				return &tsType{Kind: tsTypeAny, Nullable: t.Nullable}
 			}
 			if cached, ok := resolved[name]; ok {
 				if t.Nullable && !cached.Nullable {
@@ -361,7 +361,7 @@ func inlineDefinitions(root *TSType) *TSType {
 				return inlined
 			}
 			// Ref to unknown definition: keep as-is but strip to name only.
-			return &TSType{Kind: TSTypeRef, Ref: name, Nullable: t.Nullable}
+			return &tsType{Kind: tsTypeRef, Ref: name, Nullable: t.Nullable}
 		}
 		out := *t
 		if out.Items != nil {
@@ -374,28 +374,28 @@ func inlineDefinitions(root *TSType) *TSType {
 			out.AdditionalItems = resolve(out.AdditionalItems)
 		}
 		if len(out.Properties) > 0 {
-			props := make([]TSProperty, len(out.Properties))
+			props := make([]tsProperty, len(out.Properties))
 			for i, p := range out.Properties {
-				props[i] = TSProperty{Name: p.Name, Schema: resolve(p.Schema)}
+				props[i] = tsProperty{Name: p.Name, Schema: resolve(p.Schema)}
 			}
 			out.Properties = props
 		}
 		if len(out.PatternProperties) > 0 {
-			pp := make([]TSPatternProperty, len(out.PatternProperties))
+			pp := make([]tsPatternProperty, len(out.PatternProperties))
 			for i, p := range out.PatternProperties {
-				pp[i] = TSPatternProperty{Pattern: p.Pattern, Schema: resolve(p.Schema)}
+				pp[i] = tsPatternProperty{Pattern: p.Pattern, Schema: resolve(p.Schema)}
 			}
 			out.PatternProperties = pp
 		}
 		if len(out.TupleItems) > 0 {
-			items := make([]*TSType, len(out.TupleItems))
+			items := make([]*tsType, len(out.TupleItems))
 			for i, item := range out.TupleItems {
 				items[i] = resolve(item)
 			}
 			out.TupleItems = items
 		}
 		if len(out.Types) > 0 {
-			types := make([]*TSType, len(out.Types))
+			types := make([]*tsType, len(out.Types))
 			for i, typ := range out.Types {
 				types[i] = resolve(typ)
 			}
@@ -410,12 +410,12 @@ func inlineDefinitions(root *TSType) *TSType {
 
 // TestTSTypeToTSRoundTrip verifies the round-trip path:
 //
-//	TSType₁ (from ExtractTSType) → TSTypeToTS → TS text
-//	  → ExtractToolMetadata → TSType₂
+//	tsType₁ (from ExtractTSType) → tsTypeToTS → TS text
+//	  → ExtractToolMetadata → tsType₂
 //
-// TSType₁ and TSType₂ are compared via go-cmp after normalizing
+// tsType₁ and tsType₂ are compared via go-cmp after normalizing
 // inconsequential differences (annotations, nil-vs-empty, etc.).
-// This proves TSTypeToTS preserves full TS-level fidelity.
+// This proves tsTypeToTS preserves full TS-level fidelity.
 func TestTSTypeToTSRoundTrip(t *testing.T) {
 	fixtures, err := DiscoverFixtures("testdata/programs")
 	if err != nil {
@@ -443,7 +443,7 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 				t.Fatalf("build program: %v", err)
 			}
 
-			// Generate TSType via ExtractTSType.
+			// Generate tsType via ExtractTSType.
 			gen, err := NewGenerator(program, fixture.Spec.Options)
 			if err != nil {
 				t.Fatalf("new generator: %v", err)
@@ -463,7 +463,7 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 			tsType, err := gen.ExtractTSType(context.Background(), root)
 			gen.Close()
 			if err != nil {
-				t.Fatalf("extract TSType: %v", err)
+				t.Fatalf("extract tsType: %v", err)
 			}
 
 			// Inline definitions to produce a self-contained type for
@@ -476,10 +476,10 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 				renderType = inlineDefinitions(tsType)
 			}
 
-			// Render TSType to TS text.
-			tsText := TSTypeToTS(renderType)
+			// Render tsType to TS text.
+			tsText := tsTypeToTS(renderType)
 			if tsText == "" {
-				t.Fatalf("TSTypeToTS returned empty string for fixture %q", fixture.Name)
+				t.Fatalf("tsTypeToTS returned empty string for fixture %q", fixture.Name)
 			}
 
 			toolSource := fmt.Sprintf(
@@ -497,20 +497,20 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ExtractToolMetadata failed for generated TS:\n%s\nerror: %v", toolSource, err)
 			}
-			if meta.ParamsType == nil || meta.ParamsType.Inner() == nil {
+			if meta.ParamsType == nil || meta.ParamsType.inner == nil {
 				t.Fatalf("ExtractToolMetadata returned nil ParamsTSType for generated TS:\n%s", toolSource)
 			}
 
-			// Compare TSType trees directly after normalizing
+			// Compare tsType trees directly after normalizing
 			// inconsequential differences (annotations, nil-vs-empty,
 			// generator options, etc.).
 			expected := normalizeTSType(tsType)
-			actual := normalizeTSType(meta.ParamsType.Inner())
+			actual := normalizeTSType(meta.ParamsType.inner)
 
 			// For types with recursive definitions, structural comparison
 			// after inlining may differ because cycle-breaking points vary.
 			// Fall back to comparing the rendered TS text in that case.
-			hasRecursiveDefs := hasRecursiveDefinitions(tsType) || hasRecursiveDefinitions(meta.ParamsType.Inner())
+			hasRecursiveDefs := hasRecursiveDefinitions(tsType) || hasRecursiveDefinitions(meta.ParamsType.inner)
 
 			if diff := cmp.Diff(expected, actual); diff != "" {
 				if hasRecursiveDefs {
@@ -518,12 +518,12 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 					// recursive types as long as the result isn't completely
 					// trivial.  Strengthen this check to compare rendered TS
 					// text or verify key structural properties are preserved.
-					if meta.ParamsType.Inner().Kind == TSTypeAny && len(meta.ParamsType.Inner().Definitions) == 0 {
-						t.Errorf("%s (TSTypeToTS round-trip) recursive type lost all structure:\nGenerated TS:\n%s",
+					if meta.ParamsType.inner.Kind == tsTypeAny && len(meta.ParamsType.inner.Definitions) == 0 {
+						t.Errorf("%s (tsTypeToTS round-trip) recursive type lost all structure:\nGenerated TS:\n%s",
 							fixture.Name, toolSource)
 					}
 				} else {
-					t.Errorf("%s (TSTypeToTS round-trip) mismatch (-expected +actual):\n%s\nGenerated TS:\n%s",
+					t.Errorf("%s (tsTypeToTS round-trip) mismatch (-expected +actual):\n%s\nGenerated TS:\n%s",
 						fixture.Name, diff, toolSource)
 				}
 			}
@@ -531,9 +531,9 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 	}
 }
 
-// hasRecursiveDefinitions checks if a TSType has definitions that contain
+// hasRecursiveDefinitions checks if a tsType has definitions that contain
 // self-references (directly or indirectly).
-func hasRecursiveDefinitions(t *TSType) bool {
+func hasRecursiveDefinitions(t *tsType) bool {
 	if t == nil || len(t.Definitions) == 0 {
 		return false
 	}
@@ -551,12 +551,12 @@ func hasRecursiveDefinitions(t *TSType) bool {
 	return false
 }
 
-// containsRefTo checks if a TSType tree contains any refs to the given names.
-func containsRefTo(t *TSType, names map[string]bool) bool {
+// containsRefTo checks if a tsType tree contains any refs to the given names.
+func containsRefTo(t *tsType, names map[string]bool) bool {
 	if t == nil {
 		return false
 	}
-	if t.Kind == TSTypeRef {
+	if t.Kind == tsTypeRef {
 		ref := t.Ref
 		if idx := strings.LastIndex(ref, "/"); idx >= 0 {
 			ref = ref[idx+1:]
@@ -591,23 +591,23 @@ func containsRefTo(t *TSType, names map[string]bool) bool {
 	return false
 }
 
-// TestTSFuncSigToTSRoundTrip verifies that TSFuncSigToTS produces valid
+// TestTSFuncSigToTSRoundTrip verifies that tsFuncSigToTS produces valid
 // TypeScript function signature text.
 func TestTSFuncSigToTSRoundTrip(t *testing.T) {
-	sig := &TSFuncSig{
+	sig := &tsFuncSig{
 		Description: "Send a message",
-		Params: []TSFuncParam{
+		Params: []tsFuncParam{
 			{
 				Name: "channelID",
-				Type: &TSType{Kind: TSTypePrimitive, PrimitiveType: "string"},
+				Type: &tsType{Kind: tsTypePrimitive, PrimitiveType: "string"},
 			},
 			{
 				Name: "payload",
-				Type: &TSType{
-					Kind: TSTypeObject,
-					Properties: []TSProperty{
-						{Name: "text", Schema: &TSType{Kind: TSTypePrimitive, PrimitiveType: "string"}},
-						{Name: "retries", Schema: &TSType{Kind: TSTypePrimitive, PrimitiveType: "number"}},
+				Type: &tsType{
+					Kind: tsTypeObject,
+					Properties: []tsProperty{
+						{Name: "text", Schema: &tsType{Kind: tsTypePrimitive, PrimitiveType: "string"}},
+						{Name: "retries", Schema: &tsType{Kind: tsTypePrimitive, PrimitiveType: "number"}},
 					},
 					Required:             []string{"text", "retries"},
 					AdditionalPropertiesBool: boolPtr(false),
@@ -616,66 +616,66 @@ func TestTSFuncSigToTSRoundTrip(t *testing.T) {
 		},
 	}
 
-	result := TSFuncSigToTS(sig)
+	result := tsFuncSigToTS(sig)
 	if result == "" {
-		t.Fatal("TSFuncSigToTS returned empty string")
+		t.Fatal("tsFuncSigToTS returned empty string")
 	}
 
 	// The result should be a valid function signature like:
 	// (channelID: string, payload: { text: string; retries: number }) => void
 	// We just verify it's non-empty for now; the fixture round-trip
 	// is the primary correctness check.
-	t.Logf("TSFuncSigToTS result: %s", result)
+	t.Logf("tsFuncSigToTS result: %s", result)
 }
 
-// TestTSTypeToTSBasicTypes verifies TSTypeToTS for basic type kinds.
+// TestTSTypeToTSBasicTypes verifies tsTypeToTS for basic type kinds.
 func TestTSTypeToTSBasicTypes(t *testing.T) {
 	tests := []struct {
 		name     string
-		tsType   *TSType
+		tsType   *tsType
 		wantNot  string // should not produce this
 	}{
 		{
 			name:    "primitive string",
-			tsType:  &TSType{Kind: TSTypePrimitive, PrimitiveType: "string"},
+			tsType:  &tsType{Kind: tsTypePrimitive, PrimitiveType: "string"},
 			wantNot: "",
 		},
 		{
 			name:    "primitive number",
-			tsType:  &TSType{Kind: TSTypePrimitive, PrimitiveType: "number"},
+			tsType:  &tsType{Kind: tsTypePrimitive, PrimitiveType: "number"},
 			wantNot: "",
 		},
 		{
 			name:    "primitive boolean",
-			tsType:  &TSType{Kind: TSTypePrimitive, PrimitiveType: "boolean"},
+			tsType:  &tsType{Kind: tsTypePrimitive, PrimitiveType: "boolean"},
 			wantNot: "",
 		},
 		{
 			name:    "any",
-			tsType:  &TSType{Kind: TSTypeAny},
+			tsType:  &tsType{Kind: tsTypeAny},
 			wantNot: "",
 		},
 		{
 			name:    "string literal",
-			tsType:  &TSType{Kind: TSTypeLiteral, LiteralValue: "hello", PrimitiveType: "string"},
+			tsType:  &tsType{Kind: tsTypeLiteral, LiteralValue: "hello", PrimitiveType: "string"},
 			wantNot: "",
 		},
 		{
 			name:    "number literal",
-			tsType:  &TSType{Kind: TSTypeLiteral, LiteralValue: float64(42), PrimitiveType: "number"},
+			tsType:  &tsType{Kind: tsTypeLiteral, LiteralValue: float64(42), PrimitiveType: "number"},
 			wantNot: "",
 		},
 		{
 			name:    "boolean literal",
-			tsType:  &TSType{Kind: TSTypeLiteral, LiteralValue: true, PrimitiveType: "boolean"},
+			tsType:  &tsType{Kind: tsTypeLiteral, LiteralValue: true, PrimitiveType: "boolean"},
 			wantNot: "",
 		},
 		{
 			name: "simple object",
-			tsType: &TSType{
-				Kind: TSTypeObject,
-				Properties: []TSProperty{
-					{Name: "name", Schema: &TSType{Kind: TSTypePrimitive, PrimitiveType: "string"}},
+			tsType: &tsType{
+				Kind: tsTypeObject,
+				Properties: []tsProperty{
+					{Name: "name", Schema: &tsType{Kind: tsTypePrimitive, PrimitiveType: "string"}},
 				},
 				Required:             []string{"name"},
 				AdditionalPropertiesBool: boolPtr(false),
@@ -684,49 +684,49 @@ func TestTSTypeToTSBasicTypes(t *testing.T) {
 		},
 		{
 			name: "array of strings",
-			tsType: &TSType{
-				Kind:  TSTypeArray,
-				Items: &TSType{Kind: TSTypePrimitive, PrimitiveType: "string"},
+			tsType: &tsType{
+				Kind:  tsTypeArray,
+				Items: &tsType{Kind: tsTypePrimitive, PrimitiveType: "string"},
 			},
 			wantNot: "",
 		},
 		{
 			name: "tuple",
-			tsType: &TSType{
-				Kind: TSTypeTuple,
-				TupleItems: []*TSType{
-					{Kind: TSTypePrimitive, PrimitiveType: "string"},
-					{Kind: TSTypePrimitive, PrimitiveType: "number"},
+			tsType: &tsType{
+				Kind: tsTypeTuple,
+				TupleItems: []*tsType{
+					{Kind: tsTypePrimitive, PrimitiveType: "string"},
+					{Kind: tsTypePrimitive, PrimitiveType: "number"},
 				},
 			},
 			wantNot: "",
 		},
 		{
 			name: "union",
-			tsType: &TSType{
-				Kind: TSTypeUnion,
-				Types: []*TSType{
-					{Kind: TSTypePrimitive, PrimitiveType: "string"},
-					{Kind: TSTypePrimitive, PrimitiveType: "number"},
+			tsType: &tsType{
+				Kind: tsTypeUnion,
+				Types: []*tsType{
+					{Kind: tsTypePrimitive, PrimitiveType: "string"},
+					{Kind: tsTypePrimitive, PrimitiveType: "number"},
 				},
 			},
 			wantNot: "",
 		},
 		{
 			name: "intersection",
-			tsType: &TSType{
-				Kind: TSTypeIntersection,
-				Types: []*TSType{
-					{Kind: TSTypeObject, Properties: []TSProperty{{Name: "a", Schema: &TSType{Kind: TSTypePrimitive, PrimitiveType: "string"}}}, Required: []string{"a"}},
-					{Kind: TSTypeObject, Properties: []TSProperty{{Name: "b", Schema: &TSType{Kind: TSTypePrimitive, PrimitiveType: "number"}}}, Required: []string{"b"}},
+			tsType: &tsType{
+				Kind: tsTypeIntersection,
+				Types: []*tsType{
+					{Kind: tsTypeObject, Properties: []tsProperty{{Name: "a", Schema: &tsType{Kind: tsTypePrimitive, PrimitiveType: "string"}}}, Required: []string{"a"}},
+					{Kind: tsTypeObject, Properties: []tsProperty{{Name: "b", Schema: &tsType{Kind: tsTypePrimitive, PrimitiveType: "number"}}}, Required: []string{"b"}},
 				},
 			},
 			wantNot: "",
 		},
 		{
 			name: "nullable string",
-			tsType: &TSType{
-				Kind:          TSTypePrimitive,
+			tsType: &tsType{
+				Kind:          tsTypePrimitive,
 				PrimitiveType: "string",
 				Nullable:      true,
 			},
@@ -734,8 +734,8 @@ func TestTSTypeToTSBasicTypes(t *testing.T) {
 		},
 		{
 			name: "enum",
-			tsType: &TSType{
-				Kind:       TSTypeEnum,
+			tsType: &tsType{
+				Kind:       tsTypeEnum,
 				EnumValues: []any{"a", "b", "c"},
 			},
 			wantNot: "",
@@ -744,11 +744,11 @@ func TestTSTypeToTSBasicTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := TSTypeToTS(tt.tsType)
+			result := tsTypeToTS(tt.tsType)
 			if result == "" {
-				t.Fatalf("TSTypeToTS returned empty string for %s", tt.name)
+				t.Fatalf("tsTypeToTS returned empty string for %s", tt.name)
 			}
-			t.Logf("TSTypeToTS(%s) = %s", tt.name, result)
+			t.Logf("tsTypeToTS(%s) = %s", tt.name, result)
 		})
 	}
 }

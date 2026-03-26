@@ -7,7 +7,7 @@ import (
 )
 
 // TestTSTypeRoundTrip verifies that the round-trip path
-// checker.Type -> JSON Schema -> TSType -> JSON Schema
+// checker.Type -> JSON Schema -> tsType -> JSON Schema
 // produces identical output for every existing test fixture.
 func TestTSTypeRoundTrip(t *testing.T) {
 	fixtures, err := DiscoverFixtures("testdata/programs")
@@ -47,9 +47,9 @@ func TestTSTypeRoundTrip(t *testing.T) {
 					continue
 				}
 
-				// Round-trip: Schema -> TSType -> Schema.
+				// Round-trip: Schema -> tsType -> Schema.
 				tsType := schemaToTSType(schemaMap)
-				roundTripped := TSTypeToJSON(tsType)
+				roundTripped := tsTypeToJSON(tsType)
 
 				assertJSONEqual(t, roundTripped, schemaMap, name+" (round-trip)")
 			}
@@ -92,7 +92,7 @@ func TestTSTypeRoundTripSchemaOverride(t *testing.T) {
 	}
 
 	tsType := schemaToTSType(original)
-	roundTripped := TSTypeToJSON(tsType)
+	roundTripped := tsTypeToJSON(tsType)
 	assertJSONEqual(t, roundTripped, original, "schema.json (round-trip)")
 }
 
@@ -253,26 +253,26 @@ func TestSchemaToTSTypeBasic(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tsType := schemaToTSType(tt.schema)
-			roundTripped := TSTypeToJSON(tsType)
+			roundTripped := tsTypeToJSON(tsType)
 			assertJSONEqual(t, roundTripped, tt.schema, tt.name)
 		})
 	}
 }
 
-// TestTSTypeToJSONNoDependency ensures TSTypeToJSON can be used without
+// TestTSTypeToJSONNoDependency ensures tsTypeToJSON can be used without
 // importing any internal/ packages (compile-time check).
 func TestTSTypeToJSONNoDependency(t *testing.T) {
 	// This test is a compile-time check. If this file compiles,
-	// TSTypeToJSON does not depend on internal/ packages.
-	tsType := &TSType{
-		Kind: TSTypeObject,
-		Properties: []TSProperty{
-			{Name: "name", Schema: &TSType{Kind: TSTypePrimitive, PrimitiveType: "string"}},
+	// tsTypeToJSON does not depend on internal/ packages.
+	tsType := &tsType{
+		Kind: tsTypeObject,
+		Properties: []tsProperty{
+			{Name: "name", Schema: &tsType{Kind: tsTypePrimitive, PrimitiveType: "string"}},
 		},
 		Required:             []string{"name"},
 		AdditionalPropertiesBool: boolPtr(false),
 	}
-	schema := TSTypeToJSON(tsType)
+	schema := tsTypeToJSON(tsType)
 	if schema == nil {
 		t.Fatal("expected non-nil schema")
 	}
@@ -283,7 +283,7 @@ func TestTSTypeToJSONNoDependency(t *testing.T) {
 }
 
 // TestExtractTSTypeEquivalence verifies that for every fixture,
-// TSTypeToJSON(ExtractTSType(name)) produces identical output to
+// tsTypeToJSON(ExtractTSType(name)) produces identical output to
 // GenerateSchemaForName(name). This tests the full extractTSType path.
 func TestExtractTSTypeEquivalence(t *testing.T) {
 	fixtures, err := DiscoverFixtures("testdata/programs")
@@ -344,7 +344,7 @@ func TestExtractTSTypeEquivalence(t *testing.T) {
 				t.Fatalf("generate schema: %v", err)
 			}
 
-			// Generate TSType via ExtractTSType and render to JSON Schema.
+			// Generate tsType via ExtractTSType and render to JSON Schema.
 			gen2, err := NewGenerator(program, fixture.Spec.Options)
 			if err != nil {
 				t.Fatalf("new generator for extract: %v", err)
@@ -352,10 +352,10 @@ func TestExtractTSTypeEquivalence(t *testing.T) {
 			tsType, err := gen2.ExtractTSType(context.Background(), root)
 			gen2.Close()
 			if err != nil {
-				t.Fatalf("extract TSType: %v", err)
+				t.Fatalf("extract tsType: %v", err)
 			}
 
-			extractedSchema := TSTypeToJSON(tsType)
+			extractedSchema := tsTypeToJSON(tsType)
 
 			assertJSONEqual(t, extractedSchema, directSchema, fixture.Name+" (ExtractTSType equivalence)")
 		})
@@ -363,40 +363,40 @@ func TestExtractTSTypeEquivalence(t *testing.T) {
 }
 
 // TestTSTypePreservesUnionOfLiterals verifies that a union of string
-// literals extracted from checker types is captured as TSTypeUnion with
-// TSTypeLiteral children (not as a single TSTypeEnum node).
+// literals extracted from checker types is captured as tsTypeUnion with
+// tsTypeLiteral children (not as a single tsTypeEnum node).
 func TestTSTypePreservesUnionOfLiterals(t *testing.T) {
-	// Build a TSType that mirrors what extractUnionTSType produces for
-	// `"a" | "b" | "c"`: a TSTypeUnion with TSTypeLiteral children and
+	// Build a tsType that mirrors what extractUnionTSType produces for
+	// `"a" | "b" | "c"`: a tsTypeUnion with tsTypeLiteral children and
 	// CollapseLiterals=true.
-	tsType := &TSType{
-		Kind:             TSTypeUnion,
+	tsType := &tsType{
+		Kind:             tsTypeUnion,
 		CollapseLiterals: true,
-		Types: []*TSType{
-			{Kind: TSTypeLiteral, LiteralValue: "a", PrimitiveType: "string"},
-			{Kind: TSTypeLiteral, LiteralValue: "b", PrimitiveType: "string"},
-			{Kind: TSTypeLiteral, LiteralValue: "c", PrimitiveType: "string"},
+		Types: []*tsType{
+			{Kind: tsTypeLiteral, LiteralValue: "a", PrimitiveType: "string"},
+			{Kind: tsTypeLiteral, LiteralValue: "b", PrimitiveType: "string"},
+			{Kind: tsTypeLiteral, LiteralValue: "c", PrimitiveType: "string"},
 		},
 	}
-	if tsType.Kind != TSTypeUnion {
-		t.Fatalf("expected TSTypeUnion, got %d", tsType.Kind)
+	if tsType.Kind != tsTypeUnion {
+		t.Fatalf("expected tsTypeUnion, got %d", tsType.Kind)
 	}
 	if len(tsType.Types) != 3 {
 		t.Fatalf("expected 3 union members, got %d", len(tsType.Types))
 	}
 	for i, child := range tsType.Types {
-		if child.Kind != TSTypeLiteral {
-			t.Fatalf("child %d: expected TSTypeLiteral, got %d", i, child.Kind)
+		if child.Kind != tsTypeLiteral {
+			t.Fatalf("child %d: expected tsTypeLiteral, got %d", i, child.Kind)
 		}
 	}
 
-	// Round-trip: TSTypeToJSON should collapse the union of string literals
+	// Round-trip: tsTypeToJSON should collapse the union of string literals
 	// into {"type": "string", "enum": ["a","b","c"]}.
 	expected := Schema{
 		"type": "string",
 		"enum": []any{"a", "b", "c"},
 	}
-	roundTripped := TSTypeToJSON(tsType)
+	roundTripped := tsTypeToJSON(tsType)
 	assertJSONEqual(t, roundTripped, expected, "union of literals")
 }
 
@@ -408,7 +408,7 @@ func TestTSTypeObjectEmptyProperties(t *testing.T) {
 		"properties": map[string]any{},
 	}
 	tsType := schemaToTSType(schema)
-	roundTripped := TSTypeToJSON(tsType)
+	roundTripped := tsTypeToJSON(tsType)
 	assertJSONEqual(t, roundTripped, schema, "empty properties")
 }
 

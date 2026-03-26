@@ -71,8 +71,8 @@ export default async function tool(params: { query: string; limit?: number }, ct
 	if meta.ParamsType == nil {
 		t.Fatal("expected ParamsType to be non-nil")
 	}
-	if meta.ParamsType.Inner() != sigParams[0].Type().Inner() {
-		t.Fatal("expected ParamsType.Inner() to match Sig.Params()[0].Type().Inner()")
+	if meta.ParamsType.ToTS() != sigParams[0].Type().ToTS() {
+		t.Fatal("expected ParamsType.ToTS() to match Sig.Params()[0].Type().ToTS()")
 	}
 }
 

@@ -19,7 +19,7 @@ import (
 type ToolMetadata struct {
 	Description  string
 	ParamsSchema Schema         // keep for backward compat
-	ParamsType   *ParamsType    // facade wrapper around the first param's TSType
+	ParamsType   *ParamsType    // facade wrapper around the first param's tsType
 	Sig          *FuncSig       // facade wrapper around the full function signature
 }
 
@@ -115,14 +115,14 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 		sig := signatures[0]
 		params := sig.Parameters()
 
-		funcSig := &TSFuncSig{Description: meta.Description}
+		funcSig := &tsFuncSig{Description: meta.Description}
 		for _, param := range params {
 			paramType := ch.GetTypeOfSymbolAtLocation(param, sig.Declaration())
 			tsType, err := gen.extractTSType(paramType, param, sig.Declaration())
 			if err != nil {
 				return nil, fmt.Errorf("toolbox: generate param schema: %w", err)
 			}
-			funcSig.Params = append(funcSig.Params, TSFuncParam{
+			funcSig.Params = append(funcSig.Params, tsFuncParam{
 				Name: param.Name,
 				Type: tsType,
 			})
@@ -142,12 +142,12 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 			// Attach any definitions gathered during extraction.
 			// extractTSType populates g.definitions when it encounters
 			// types that should be emitted as definitions (e.g. type
-			// aliases, interfaces), but the returned TSType only has
+			// aliases, interfaces), but the returned tsType only has
 			// $ref pointers — the definitions map must be attached to
-			// the root TSType so callers can resolve them.
+			// the root tsType so callers can resolve them.
 			if len(gen.definitions) > 0 && paramType != nil {
 				if paramType.Definitions == nil {
-					paramType.Definitions = make(map[string]*TSType, len(gen.definitions))
+					paramType.Definitions = make(map[string]*tsType, len(gen.definitions))
 				}
 				for name, def := range gen.definitions {
 					if _, exists := paramType.Definitions[name]; !exists {
@@ -156,7 +156,7 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 				}
 			}
 
-			meta.ParamsSchema = TSTypeToJSON(paramType)
+			meta.ParamsSchema = tsTypeToJSON(paramType)
 			meta.ParamsType = &ParamsType{inner: paramType}
 		}
 		meta.Sig = &FuncSig{inner: funcSig}
