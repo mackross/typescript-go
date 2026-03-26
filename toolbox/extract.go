@@ -18,15 +18,9 @@ import (
 
 type ToolMetadata struct {
 	Description  string
-	ParamsSchema Schema
-	// ParamsTSType is the structured intermediate representation of the
-	// first parameter's type.  It is populated alongside ParamsSchema and
-	// can be manipulated (e.g. to splice in literal types for bound
-	// parameters) before being rendered to JSON Schema via TSTypeToJSON.
-	ParamsTSType *TSType
-	// FuncSig provides the full function signature as structured TSType
-	// nodes, including all parameters and their names.
-	FuncSig *TSFuncSig
+	ParamsSchema Schema         // keep for backward compat
+	ParamsType   *ParamsType    // facade wrapper around the first param's TSType
+	Sig          *FuncSig       // facade wrapper around the full function signature
 }
 
 type ExtractInput struct {
@@ -133,8 +127,15 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 				Type: tsType,
 			})
 		}
-		meta.FuncSig = funcSig
 
+		// Extract the return type.
+		retType := ch.GetReturnTypeOfSignature(sig)
+		if retType != nil {
+			rt, err := gen.extractTSType(retType, nil, sig.Declaration())
+			if err == nil {
+				funcSig.ReturnType = rt
+			}
+		}
 		if len(params) > 0 {
 			paramType := funcSig.Params[0].Type
 
@@ -156,8 +157,9 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 			}
 
 			meta.ParamsSchema = TSTypeToJSON(paramType)
-			meta.ParamsTSType = paramType
+			meta.ParamsType = &ParamsType{inner: paramType}
 		}
+		meta.Sig = &FuncSig{inner: funcSig}
 	}
 
 	return meta, nil

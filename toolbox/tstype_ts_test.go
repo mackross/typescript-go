@@ -497,7 +497,7 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ExtractToolMetadata failed for generated TS:\n%s\nerror: %v", toolSource, err)
 			}
-			if meta.ParamsTSType == nil {
+			if meta.ParamsType == nil || meta.ParamsType.Inner() == nil {
 				t.Fatalf("ExtractToolMetadata returned nil ParamsTSType for generated TS:\n%s", toolSource)
 			}
 
@@ -505,12 +505,12 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 			// inconsequential differences (annotations, nil-vs-empty,
 			// generator options, etc.).
 			expected := normalizeTSType(tsType)
-			actual := normalizeTSType(meta.ParamsTSType)
+			actual := normalizeTSType(meta.ParamsType.Inner())
 
 			// For types with recursive definitions, structural comparison
 			// after inlining may differ because cycle-breaking points vary.
 			// Fall back to comparing the rendered TS text in that case.
-			hasRecursiveDefs := hasRecursiveDefinitions(tsType) || hasRecursiveDefinitions(meta.ParamsTSType)
+			hasRecursiveDefs := hasRecursiveDefinitions(tsType) || hasRecursiveDefinitions(meta.ParamsType.Inner())
 
 			if diff := cmp.Diff(expected, actual); diff != "" {
 				if hasRecursiveDefs {
@@ -518,7 +518,7 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 					// recursive types as long as the result isn't completely
 					// trivial.  Strengthen this check to compare rendered TS
 					// text or verify key structural properties are preserved.
-					if meta.ParamsTSType.Kind == TSTypeAny && len(meta.ParamsTSType.Definitions) == 0 {
+					if meta.ParamsType.Inner().Kind == TSTypeAny && len(meta.ParamsType.Inner().Definitions) == 0 {
 						t.Errorf("%s (TSTypeToTS round-trip) recursive type lost all structure:\nGenerated TS:\n%s",
 							fixture.Name, toolSource)
 					}

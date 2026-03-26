@@ -448,5 +448,10 @@ func TSFuncSigToTS(sig *TSFuncSig) string {
 		params[i] = p.Name + ": " + paramType
 	}
 
-	return "(" + strings.Join(params, ", ") + ") => void"
+	retStr := "void"
+	if sig.ReturnType != nil {
+		retStr = TSTypeToTS(sig.ReturnType)
+	}
+
+	return "(" + strings.Join(params, ", ") + ") => " + retStr
 }

@@ -185,6 +185,7 @@ type TSAnnotations struct {
 type TSFuncSig struct {
 	Description string
 	Params      []TSFuncParam
+	ReturnType  *TSType
 }
 
 // TSFuncParam represents a single function parameter with its name and type.
