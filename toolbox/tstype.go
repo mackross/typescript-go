@@ -180,18 +180,27 @@ type tsAnnotations struct {
 	Extra map[string]any
 }
 
+// jsdocTag represents a single raw JSDoc tag (e.g. @param, @accessMode).
+type jsdocTag struct {
+	Name string
+	Text string
+}
+
 // tsFuncSig wraps a function signature's parameter types as tsType nodes,
 // along with the function's description.
 type tsFuncSig struct {
 	Description string
 	Params      []tsFuncParam
 	ReturnType  *tsType
+	Tags        []jsdocTag
 }
 
 // tsFuncParam represents a single function parameter with its name and type.
 type tsFuncParam struct {
-	Name string
-	Type *tsType
+	Name        string
+	Type        *tsType
+	Description string
+	Optional    bool
 }
 
 // inferNumberType returns the number type string to use for enum rendering.

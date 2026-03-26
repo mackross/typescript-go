@@ -219,10 +219,30 @@ func (f *FuncSig) Description() string {
 	return f.inner.Description
 }
 
+// JSDocTag represents a single raw JSDoc tag.
+type JSDocTag struct {
+	Name string
+	Text string
+}
+
+// Tags returns all raw JSDoc tags from the function's documentation.
+func (f *FuncSig) Tags() []JSDocTag {
+	if f == nil || f.inner == nil {
+		return nil
+	}
+	out := make([]JSDocTag, len(f.inner.Tags))
+	for i, t := range f.inner.Tags {
+		out[i] = JSDocTag{Name: t.Name, Text: t.Text}
+	}
+	return out
+}
+
 // FuncParam is a facade over a single function parameter.
 type FuncParam struct {
-	name string
-	typ  *ParamsType
+	name        string
+	typ         *ParamsType
+	description string
+	optional    bool
 }
 
 // Name returns the parameter name.
@@ -230,6 +250,12 @@ func (p *FuncParam) Name() string { return p.name }
 
 // Type returns the parameter type as a ParamsType facade.
 func (p *FuncParam) Type() *ParamsType { return p.typ }
+
+// Description returns the parameter's JSDoc description.
+func (p *FuncParam) Description() string { return p.description }
+
+// Optional reports whether the parameter is optional (has a ? token or default value).
+func (p *FuncParam) Optional() bool { return p.optional }
 
 // Params returns the function's parameters as facade types.
 func (f *FuncSig) Params() []FuncParam {
@@ -239,8 +265,10 @@ func (f *FuncSig) Params() []FuncParam {
 	out := make([]FuncParam, len(f.inner.Params))
 	for i, p := range f.inner.Params {
 		out[i] = FuncParam{
-			name: p.Name,
-			typ:  wrapParamsType(p.Type),
+			name:        p.Name,
+			typ:         wrapParamsType(p.Type),
+			description: p.Description,
+			optional:    p.Optional,
 		}
 	}
 	return out
@@ -252,6 +280,56 @@ func (f *FuncSig) Return() *ParamsType {
 		return nil
 	}
 	return &ParamsType{inner: f.inner.ReturnType}
+}
+
+// CombinedParamsType returns a synthetic object ParamsType that combines all
+// function parameters into a single object type. Each param becomes a property,
+// with optional params excluded from "required". This is the shape needed for
+// MCP JSON Schema.
+func (f *FuncSig) CombinedParamsType() *ParamsType {
+	if f == nil || f.inner == nil || len(f.inner.Params) == 0 {
+		return nil
+	}
+	props := make([]tsProperty, 0, len(f.inner.Params))
+	var required []string
+	for _, p := range f.inner.Params {
+		propType := p.Type
+		// Copy param description into the property's type annotations.
+		if p.Description != "" && propType != nil {
+			cp := *propType
+			if cp.Annotations == nil {
+				cp.Annotations = &tsAnnotations{}
+			} else {
+				annCopy := *cp.Annotations
+				cp.Annotations = &annCopy
+			}
+			cp.Annotations.Description = p.Description
+			propType = &cp
+		}
+		props = append(props, tsProperty{Name: p.Name, Schema: propType})
+		if !p.Optional {
+			required = append(required, p.Name)
+		}
+	}
+	// Collect definitions from all parameter types.
+	var defs map[string]*tsType
+	for _, p := range f.inner.Params {
+		if p.Type != nil && len(p.Type.Definitions) > 0 {
+			if defs == nil {
+				defs = make(map[string]*tsType)
+			}
+			for name, def := range p.Type.Definitions {
+				defs[name] = def
+			}
+		}
+	}
+	combined := &tsType{
+		Kind:        tsTypeObject,
+		Properties:  props,
+		Required:    required,
+		Definitions: defs,
+	}
+	return &ParamsType{inner: combined}
 }
 
 // ToTS renders the function signature as a TypeScript function type expression.

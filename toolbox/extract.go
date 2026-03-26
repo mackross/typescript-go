@@ -105,8 +105,45 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 
 	meta := &ToolMetadata{}
 
+	var rawTags []jsdocTag
 	if docs := gen.parseDocs(defaultExport); docs != nil {
 		meta.Description = docs.description
+	}
+
+	// Collect all raw JSDoc tags from the default export node.
+	if n := asNode(defaultExport); n != nil {
+		for _, jsdoc := range n.JSDoc(nil) {
+			if jsdoc == nil || jsdoc.AsJSDoc().Tags == nil {
+				continue
+			}
+			for _, tag := range jsdoc.AsJSDoc().Tags.Nodes {
+				if tag == nil {
+					continue
+				}
+				tagName := tag.TagName().Text()
+				commentText := jsdocText(tag.CommentList())
+
+				// For @param tags, the parameter name is parsed
+				// separately by the TS parser. Reconstruct the full
+				// raw text by prepending the param name.
+				if tag.Kind == ast.KindJSDocParameterTag {
+					paramTag := tag.AsJSDocParameterOrPropertyTag()
+					if paramTag.Name() != nil {
+						pName := paramTag.Name().Text()
+						if commentText != "" {
+							commentText = pName + " " + commentText
+						} else {
+							commentText = pName
+						}
+					}
+				}
+
+				rawTags = append(rawTags, jsdocTag{
+					Name: tagName,
+					Text: commentText,
+				})
+			}
+		}
 	}
 
 	functionType := ch.GetTypeOfSymbol(defaultExport.Symbol())
@@ -115,16 +152,40 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 		sig := signatures[0]
 		params := sig.Parameters()
 
-		funcSig := &tsFuncSig{Description: meta.Description}
+		// Build a map of param name -> description from @param tags.
+		paramDescs := map[string]string{}
+		for _, tag := range rawTags {
+			if tag.Name == "param" && tag.Text != "" {
+				text := tag.Text
+				// Strip leading dash: "paramName - description" or "paramName description"
+				paramName, rest, _ := strings.Cut(text, " ")
+				rest = strings.TrimSpace(rest)
+				rest = strings.TrimPrefix(rest, "- ")
+				rest = strings.TrimPrefix(rest, "-")
+				rest = strings.TrimSpace(rest)
+				paramDescs[paramName] = rest
+			}
+		}
+
+		funcSig := &tsFuncSig{Description: meta.Description, Tags: rawTags}
 		for _, param := range params {
 			paramType := ch.GetTypeOfSymbolAtLocation(param, sig.Declaration())
 			tsType, err := gen.extractTSType(paramType, param, sig.Declaration())
 			if err != nil {
 				return nil, fmt.Errorf("toolbox: generate param schema: %w", err)
 			}
+			optional := false
+			if len(param.Declarations) > 0 {
+				decl := param.Declarations[0]
+				if decl.QuestionToken() != nil || decl.Initializer() != nil {
+					optional = true
+				}
+			}
 			funcSig.Params = append(funcSig.Params, tsFuncParam{
-				Name: param.Name,
-				Type: tsType,
+				Name:        param.Name,
+				Type:        tsType,
+				Description: paramDescs[param.Name],
+				Optional:    optional,
 			})
 		}
 
