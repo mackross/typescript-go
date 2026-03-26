@@ -101,6 +101,13 @@ func tsTypeToTSCore(t *TSType) string {
 		return renderLiteral(t.LiteralValue)
 
 	case TSTypeRef:
+		if isExternalRef(t.Ref) {
+			// External $ref (e.g. "http://my-schema.org") cannot be
+			// represented as a TS type name.  Render as "any"; the
+			// caller (renderObject) emits a JSDoc @$ref annotation
+			// on the property so the ref survives re-parsing.
+			return "any"
+		}
 		// $ref like "#/definitions/MyType" -> sanitized type name
 		ref := t.Ref
 		if idx := strings.LastIndex(ref, "/"); idx >= 0 {
@@ -172,6 +179,13 @@ func renderLiteral(v any) string {
 	}
 }
 
+// isExternalRef returns true when a $ref URI points to an external schema
+// (e.g. "http://my-schema.org") rather than an internal definition
+// (e.g. "#/definitions/MyType").
+func isExternalRef(ref string) bool {
+	return ref != "" && !strings.HasPrefix(ref, "#")
+}
+
 // renderObject renders a TSTypeObject as TypeScript source text.
 func renderObject(t *TSType) string {
 	if t.WildcardObject {
@@ -184,6 +198,18 @@ func renderObject(t *TSType) string {
 		reqSet[name] = true
 	}
 
+	// Check if any property needs a JSDoc annotation (external $ref).
+	// When JSDoc is needed, we must use multi-line format because the
+	// TS parser only associates /** ... */ comments with the next node
+	// when they appear on a preceding line.
+	hasJSDoc := false
+	for _, prop := range t.Properties {
+		if prop.Schema != nil && prop.Schema.Kind == TSTypeRef && isExternalRef(prop.Schema.Ref) {
+			hasJSDoc = true
+			break
+		}
+	}
+
 	var parts []string
 	for _, prop := range t.Properties {
 		optional := ""
@@ -191,7 +217,12 @@ func renderObject(t *TSType) string {
 			optional = "?"
 		}
 		propType := TSTypeToTS(prop.Schema)
-		parts = append(parts, fmt.Sprintf("%s%s: %s", prop.Name, optional, propType))
+		if hasJSDoc && prop.Schema != nil && prop.Schema.Kind == TSTypeRef && isExternalRef(prop.Schema.Ref) {
+			// Multi-line JSDoc annotation before the property.
+			parts = append(parts, fmt.Sprintf("/** @$ref %s */\n%s%s: %s", prop.Schema.Ref, prop.Name, optional, propType))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s%s: %s", prop.Name, optional, propType))
+		}
 	}
 
 	// Handle index signatures from AdditionalProperties.
@@ -213,6 +244,10 @@ func renderObject(t *TSType) string {
 
 	if len(parts) == 0 {
 		return "{}"
+	}
+	if hasJSDoc {
+		// Multi-line format for JSDoc annotations.
+		return "{\n" + strings.Join(parts, ";\n") + ";\n}"
 	}
 	return "{ " + strings.Join(parts, "; ") + " }"
 }

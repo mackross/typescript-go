@@ -64,6 +64,17 @@ func normalizeTSTypeCore(t *TSType) *TSType {
 	// through TS type text.
 	out.Annotations = nil
 
+	// Normalize $ref paths: strip the directory prefix (e.g.
+	// "#/definitions/MyType" → "MyType", "http://example.org/foo" → "foo").
+	// inlineDefinitions performs this stripping for definition refs, but
+	// external refs (which are not in definitions) need the same treatment
+	// so that the original and re-parsed Ref values match.
+	if out.Kind == TSTypeRef && out.Ref != "" {
+		if idx := strings.LastIndex(out.Ref, "/"); idx >= 0 {
+			out.Ref = out.Ref[idx+1:]
+		}
+	}
+
 	// Handle multi-type primitives from ExtraFields before stripping.
 	// Multi-type: {"type": ["string", "null"]} → PrimitiveType="string", Nullable=true
 	if out.Kind == TSTypePrimitive && out.ExtraFields != nil {
@@ -425,19 +436,7 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 				return
 			}
 
-			// Skip fixtures that genuinely cannot round-trip through TS text.
-			switch fixture.Name {
-			case "annotation-ref":
-				t.Skipf("fixture %q has external $ref URLs not representable in TS type syntax", fixture.Name)
-				return
-			case "map-types":
-				t.Skipf("fixture %q triggers generator infinite recursion during re-parse (pre-existing bug)", fixture.Name)
-				return
-			case "type-aliases-tuple", "type-aliases-tuple-of-variable-length",
-				"type-aliases-tuple-with-names":
-				t.Skipf("fixture %q: tuples re-parsed as objects with numeric properties (extraction limitation)", fixture.Name)
-				return
-			}
+			// Previously skipped fixtures — now attempting to fix.
 
 			program, err := BuildProgram(context.Background(), fixture)
 			if err != nil {
@@ -467,28 +466,26 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 				t.Fatalf("extract TSType: %v", err)
 			}
 
+			// Inline definitions to produce a self-contained type for
+			// rendering.  This avoids generator recursion bugs that can
+			// occur when the re-parser encounters type alias chains in
+			// the generated TS (e.g. map types referencing other type
+			// aliases via index signatures).
+			renderType := tsType
+			if len(tsType.Definitions) > 0 {
+				renderType = inlineDefinitions(tsType)
+			}
+
 			// Render TSType to TS text.
-			tsText := TSTypeToTS(tsType)
+			tsText := TSTypeToTS(renderType)
 			if tsText == "" {
 				t.Fatalf("TSTypeToTS returned empty string for fixture %q", fixture.Name)
 			}
 
-			// Emit type declarations for definitions, then wrap in
-			// a default export function so ExtractToolMetadata can
-			// parse it.
-			declarations := TSTypeDeclarationsToTS(tsType)
-			var toolSource string
-			if declarations != "" {
-				toolSource = fmt.Sprintf(
-					"%sexport default function tool(params: %s): void {}\n",
-					declarations, tsText,
-				)
-			} else {
-				toolSource = fmt.Sprintf(
-					"export default function tool(params: %s): void {}\n",
-					tsText,
-				)
-			}
+			toolSource := fmt.Sprintf(
+				"export default function tool(params: %s): void {}\n",
+				tsText,
+			)
 
 			// Parse back via ExtractToolMetadata.
 			meta, err := ExtractToolMetadata(context.Background(), ExtractInput{

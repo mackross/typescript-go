@@ -415,6 +415,15 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		return result, nil
 	}
 
+	// Tuple types (which are object types with ObjectFlagsTuple).
+	// Detect tuples before the generic object path so that inline
+	// tuple literals (e.g. function params typed as [string, number])
+	// are extracted as TSTypeTuple rather than TSTypeObject with
+	// numeric properties.
+	if t.Flags()&checker.TypeFlagsObject != 0 && checker.IsTupleType(t) {
+		return g.extractTupleTSType(t, result)
+	}
+
 	// Object types.
 	if t.Flags()&checker.TypeFlagsObject != 0 {
 		return g.extractObjectTSType(t, sym, node)
@@ -834,6 +843,55 @@ func (g *Generator) extractIntersectionTSType(t *checker.IntersectionType, sym *
 		Types:       branches,
 		Annotations: ann,
 	}
+	return result, nil
+}
+
+// extractTupleTSType extracts a tuple type directly from checker type
+// arguments and element flags, producing a TSTypeTuple node.
+// This is called when IsTupleType(t) returns true, which covers both
+// named tuple type aliases and inline tuple literals in function params.
+func (g *Generator) extractTupleTSType(t *checker.Type, result *TSType) (*TSType, error) {
+	tupleType := t.TargetTupleType()
+	typeArgs := g.checker.GetTypeArguments(t)
+	elementFlags := tupleType.ElementFlags()
+
+	result.Kind = TSTypeTuple
+
+	minItems := 0
+	for i, arg := range typeArgs {
+		var flags checker.ElementFlags
+		if i < len(elementFlags) {
+			flags = elementFlags[i]
+		}
+
+		if flags&checker.ElementFlagsRest != 0 {
+			// Rest element: ...T[] → AdditionalItems
+			elemType := arg
+			// For rest elements, the type argument is already the element type
+			// (not the array type), so we can use it directly.
+			restSchema, err := g.extractTSType(elemType, nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			result.AdditionalItems = restSchema
+			continue
+		}
+
+		elemSchema, err := g.extractTSType(arg, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		result.TupleItems = append(result.TupleItems, elemSchema)
+
+		if flags&checker.ElementFlagsRequired != 0 || flags == 0 {
+			minItems = i + 1
+		}
+	}
+
+	if minItems < len(result.TupleItems) {
+		result.MinItems = &minItems
+	}
+
 	return result, nil
 }
 
