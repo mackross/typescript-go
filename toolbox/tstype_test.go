@@ -306,9 +306,13 @@ func TestExtractTSTypeEquivalence(t *testing.T) {
 			// Skip fixtures that need special test logic.
 			switch fixture.Name {
 			case "tsconfig", "unique-names", "unique-names-multiple-subdefinitions",
-				"no-unrelated-definitions", "type-alias-schema-override",
-				"generate-all-types":
+				"no-unrelated-definitions", "type-alias-schema-override":
 				t.Skipf("fixture %q uses special test logic", fixture.Name)
+			case "generate-all-types":
+				// TODO: generate-all-types uses root="*" (all symbols), which
+				// ExtractTSType doesn't support.  Add a dedicated equivalence
+				// test that iterates over all symbols individually.
+				t.Skipf("fixture %q uses root=* which ExtractTSType does not support", fixture.Name)
 				return
 			}
 

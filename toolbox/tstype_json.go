@@ -2,6 +2,13 @@ package toolbox
 
 import "sort"
 
+// ToJSONSchema converts the TSType tree into a JSON Schema map[string]any.
+func (t *TSType) ToJSONSchema() map[string]any { return TSTypeToJSON(t) }
+
+// ToJSONSchema converts the TSFuncSig to the ParamsSchema format
+// (a JSON Schema for the first parameter's type).
+func (sig *TSFuncSig) ToJSONSchema() map[string]any { return TSFuncSigToJSON(sig) }
+
 // TSTypeToJSON converts a TSType tree into a JSON Schema map[string]any.
 // This function does NOT depend on the checker or any internal/ packages.
 func TSTypeToJSON(t *TSType) map[string]any {

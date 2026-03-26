@@ -514,11 +514,10 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 
 			if diff := cmp.Diff(expected, actual); diff != "" {
 				if hasRecursiveDefs {
-					// For recursive types, structural comparison after
-					// inlining breaks because cycle-breaking points vary.
-					// Verify the round-trip is valid by checking that the
-					// re-parsed version also has definitions and a non-trivial
-					// type structure. This is a weaker but still meaningful check.
+					// TODO: this fallback silently accepts any mismatch for
+					// recursive types as long as the result isn't completely
+					// trivial.  Strengthen this check to compare rendered TS
+					// text or verify key structural properties are preserved.
 					if meta.ParamsTSType.Kind == TSTypeAny && len(meta.ParamsTSType.Definitions) == 0 {
 						t.Errorf("%s (TSTypeToTS round-trip) recursive type lost all structure:\nGenerated TS:\n%s",
 							fixture.Name, toolSource)

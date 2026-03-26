@@ -252,6 +252,9 @@ func canonicalizeJSONKey(key string, v any) any {
 		for i, e := range x {
 			out[i] = canonicalizeJSONKey("", e)
 		}
+		// TODO: sorting anyOf/oneOf masks branch-order differences that could
+		// indicate real bugs.  Consider comparing anyOf/oneOf without sorting
+		// and only sorting truly order-independent arrays (required, enum, type).
 		if key == "required" || key == "enum" || key == "type" || key == "anyOf" || key == "oneOf" {
 			sort.Slice(out, func(i, j int) bool {
 				return jsonValueOrder(out[i]) < jsonValueOrder(out[j])

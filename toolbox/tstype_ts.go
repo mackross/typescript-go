@@ -7,6 +7,12 @@ import (
 	"unicode"
 )
 
+// ToTS renders the TSType tree back to TypeScript source text.
+func (t *TSType) ToTS() string { return TSTypeToTS(t) }
+
+// ToTS renders the TSFuncSig as a TypeScript function type expression.
+func (sig *TSFuncSig) ToTS() string { return TSFuncSigToTS(sig) }
+
 // TSTypeToTS renders a TSType tree back to TypeScript source text.
 // The output is semantically equivalent to the original type, though
 // not necessarily character-for-character identical.
