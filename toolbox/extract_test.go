@@ -410,3 +410,40 @@ export default function(query: string, limit: number, offset?: number, filters?:
 		t.Fatalf("expected non-trivial ToTS output, got %q", tsText)
 	}
 }
+
+func TestExtractReturnTypeUnwrapsPromise(t *testing.T) {
+	t.Parallel()
+
+	meta, err := toolbox.ExtractToolMetadata(context.Background(), toolbox.ExtractInput{
+		Files: fstest.MapFS{
+			"tool.ts": {
+				Data: []byte(`/**
+ * Add two numbers and return the result as a string.
+ */
+export default async function tool(a: number, b: number): Promise<string> {
+  return String(a + b);
+}
+`),
+			},
+		},
+		Entry: "tool.ts",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sig := meta.Sig
+	if sig == nil {
+		t.Fatal("expected Sig to be populated")
+	}
+
+	ret := sig.Return()
+	if ret == nil {
+		t.Fatal("expected Return() to be non-nil")
+	}
+
+	got := ret.ToTS()
+	if got != "string" {
+		t.Fatalf("expected Return().ToTS() to be %q, got %q", "string", got)
+	}
+}
