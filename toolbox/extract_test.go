@@ -442,8 +442,60 @@ export default async function tool(a: number, b: number): Promise<string> {
 		t.Fatal("expected Return() to be non-nil")
 	}
 
-	got := ret.ToTS()
+	// Return() should preserve the raw Promise wrapper type.
+	rawTS := ret.ToTS()
+	if rawTS == "string" {
+		t.Fatalf("expected Return().ToTS() to NOT be %q (should include Promise wrapper)", "string")
+	}
+
+	// UnwrapPromise() should give the inner type T from Promise<T>.
+	unwrapped := ret.UnwrapPromise()
+	if unwrapped == nil {
+		t.Fatal("expected UnwrapPromise() to return non-nil")
+	}
+	got := unwrapped.ToTS()
 	if got != "string" {
-		t.Fatalf("expected Return().ToTS() to be %q, got %q", "string", got)
+		t.Fatalf("expected Return().UnwrapPromise().ToTS() to be %q, got %q", "string", got)
+	}
+}
+
+func TestExtractReturnTypeSyncUnwrapPromiseNoop(t *testing.T) {
+	t.Parallel()
+
+	meta, err := toolbox.ExtractToolMetadata(context.Background(), toolbox.ExtractInput{
+		Files: fstest.MapFS{
+			"tool.ts": {
+				Data: []byte(`/**
+ * Synchronous function returning a string.
+ */
+export default function tool(a: number): string {
+  return String(a);
+}
+`),
+			},
+		},
+		Entry: "tool.ts",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sig := meta.Sig
+	if sig == nil {
+		t.Fatal("expected Sig to be populated")
+	}
+
+	ret := sig.Return()
+	if ret == nil {
+		t.Fatal("expected Return() to be non-nil")
+	}
+
+	// For a sync function, UnwrapPromise() should be a no-op.
+	unwrapped := ret.UnwrapPromise()
+	if ret.ToTS() != unwrapped.ToTS() {
+		t.Fatalf("expected UnwrapPromise() to be no-op for sync function, got %q vs %q", ret.ToTS(), unwrapped.ToTS())
+	}
+	if unwrapped.ToTS() != "string" {
+		t.Fatalf("expected sync Return().ToTS() to be %q, got %q", "string", unwrapped.ToTS())
 	}
 }

@@ -192,12 +192,17 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 		// Extract the return type.
 		retType := ch.GetReturnTypeOfSignature(sig)
 		if retType != nil {
-			// For async functions the checker returns Promise<T>; unwrap to T.
-			if promised := ch.GetPromisedTypeOfPromise(retType); promised != nil {
-				retType = promised
-			}
 			rt, err := gen.extractTSType(retType, nil, sig.Declaration())
 			if err == nil {
+				// For async functions the checker returns Promise<T>;
+				// store unwrapped T inside the tsType so callers can
+				// access it via UnwrapPromise().
+				if promised := ch.GetPromisedTypeOfPromise(retType); promised != nil {
+					urt, err2 := gen.extractTSType(promised, nil, sig.Declaration())
+					if err2 == nil {
+						rt.PromiseInner = urt
+					}
+				}
 				funcSig.ReturnType = rt
 			}
 		}

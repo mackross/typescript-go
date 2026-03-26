@@ -124,6 +124,10 @@ type tsType struct {
 	// ExtraFields captures arbitrary additional JSON Schema keys from
 	// @TJS-* annotations (e.g. "hide", "chance", "important", "typeof").
 	ExtraFields map[string]any
+
+	// PromiseInner holds the inner type T when this type represents Promise<T>.
+	// nil when the type is not a Promise.
+	PromiseInner *tsType
 }
 
 // tsTypeKind discriminates the different shapes a tsType can take.

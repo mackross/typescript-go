@@ -70,6 +70,20 @@ func (t *ParamsType) IsObject() bool {
 	return t.inner.Kind == tsTypeObject
 }
 
+// --- Promise unwrapping ---
+
+// UnwrapPromise returns the inner type T if the receiver represents Promise<T>.
+// If not a Promise, returns the receiver unchanged.
+func (t *ParamsType) UnwrapPromise() *ParamsType {
+	if t == nil || t.inner == nil {
+		return t
+	}
+	if t.inner.PromiseInner != nil {
+		return &ParamsType{inner: t.inner.PromiseInner}
+	}
+	return t
+}
+
 // --- Manipulation (returns new copies) ---
 
 // RemoveProperties returns a new ParamsType with the named properties removed.
@@ -275,12 +289,14 @@ func (f *FuncSig) Params() []FuncParam {
 }
 
 // Return returns the function's return type as a ParamsType facade.
+// For async functions this includes the Promise wrapper (e.g. Promise<string>).
 func (f *FuncSig) Return() *ParamsType {
 	if f == nil || f.inner == nil || f.inner.ReturnType == nil {
 		return nil
 	}
 	return &ParamsType{inner: f.inner.ReturnType}
 }
+
 
 // CombinedParamsType returns a synthetic object ParamsType that combines all
 // function parameters into a single object type. Each param becomes a property,
