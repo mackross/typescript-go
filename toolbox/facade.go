@@ -1,14 +1,14 @@
 package toolbox
 
-// ParamsType is a facade that hides tsType internals behind a clean public API.
-type ParamsType struct {
+// TSType is a facade that hides tsType internals behind a clean public API.
+type TSType struct {
 	inner *tsType
 }
 
 // --- Rendering ---
 
 // ToJSONSchema converts the type to a JSON Schema map.
-func (t *ParamsType) ToJSONSchema() map[string]any {
+func (t *TSType) ToJSONSchema() map[string]any {
 	if t == nil || t.inner == nil {
 		return map[string]any{}
 	}
@@ -16,7 +16,7 @@ func (t *ParamsType) ToJSONSchema() map[string]any {
 }
 
 // ToTS renders the type as TypeScript source text.
-func (t *ParamsType) ToTS() string {
+func (t *TSType) ToTS() string {
 	if t == nil || t.inner == nil {
 		return "any"
 	}
@@ -26,7 +26,7 @@ func (t *ParamsType) ToTS() string {
 // Declarations emits type alias declarations for all definitions
 // in the type (e.g. "type Foo = ...;\n"). Returns empty string when
 // there are no definitions.
-func (t *ParamsType) Declarations() string {
+func (t *TSType) Declarations() string {
 	if t == nil || t.inner == nil {
 		return ""
 	}
@@ -35,17 +35,17 @@ func (t *ParamsType) Declarations() string {
 
 // --- Inspection ---
 
-// PropertyInfo describes a single property of an object ParamsType.
+// PropertyInfo describes a single property of an object TSType.
 type PropertyInfo struct {
 	Name        string
-	Type        *ParamsType
+	Type        *TSType
 	Description string
 	Optional    bool
 }
 
-// Properties returns the properties of an object ParamsType with their
+// Properties returns the properties of an object TSType with their
 // names, types, descriptions, and optionality.
-func (t *ParamsType) Properties() []PropertyInfo {
+func (t *TSType) Properties() []PropertyInfo {
 	if t == nil || t.inner == nil {
 		return nil
 	}
@@ -61,7 +61,7 @@ func (t *ParamsType) Properties() []PropertyInfo {
 		}
 		out[i] = PropertyInfo{
 			Name:        p.Name,
-			Type:        &ParamsType{inner: p.Schema},
+			Type:        &TSType{inner: p.Schema},
 			Description: desc,
 			Optional:    !requiredSet[p.Name],
 		}
@@ -69,9 +69,23 @@ func (t *ParamsType) Properties() []PropertyInfo {
 	return out
 }
 
+// ObjectProperties returns the properties of an object TSType, or nil if the
+// receiver is nil, not an object, or has no properties. This is a convenience
+// that combines the nil/IsObject/empty check with Properties().
+func (t *TSType) ObjectProperties() []PropertyInfo {
+	if t == nil || t.inner == nil || t.inner.Kind != tsTypeObject {
+		return nil
+	}
+	props := t.Properties()
+	if len(props) == 0 {
+		return nil
+	}
+	return props
+}
+
 // PropertyNames returns the names of all properties on an object type.
 // Returns nil for non-object types.
-func (t *ParamsType) PropertyNames() []string {
+func (t *TSType) PropertyNames() []string {
 	if t == nil || t.inner == nil || t.inner.Kind != tsTypeObject {
 		return nil
 	}
@@ -84,7 +98,7 @@ func (t *ParamsType) PropertyNames() []string {
 
 // HasProperty reports whether the type has a property with the given name.
 // Returns false for non-object types.
-func (t *ParamsType) HasProperty(name string) bool {
+func (t *TSType) HasProperty(name string) bool {
 	if t == nil || t.inner == nil || t.inner.Kind != tsTypeObject {
 		return false
 	}
@@ -97,21 +111,21 @@ func (t *ParamsType) HasProperty(name string) bool {
 }
 
 // IsObject reports whether the underlying type is an object.
-func (t *ParamsType) IsObject() bool {
+func (t *TSType) IsObject() bool {
 	if t == nil || t.inner == nil {
 		return false
 	}
 	return t.inner.Kind == tsTypeObject
 }
 
-// DefinitionTypes returns the $ref definition types as a map of name to ParamsType.
-func (t *ParamsType) DefinitionTypes() map[string]*ParamsType {
+// DefinitionTypes returns the $ref definition types as a map of name to TSType.
+func (t *TSType) DefinitionTypes() map[string]*TSType {
 	if t == nil || t.inner == nil || len(t.inner.Definitions) == 0 {
 		return nil
 	}
-	out := make(map[string]*ParamsType, len(t.inner.Definitions))
+	out := make(map[string]*TSType, len(t.inner.Definitions))
 	for name, def := range t.inner.Definitions {
-		out[name] = &ParamsType{inner: def}
+		out[name] = &TSType{inner: def}
 	}
 	return out
 }
@@ -120,21 +134,21 @@ func (t *ParamsType) DefinitionTypes() map[string]*ParamsType {
 
 // UnwrapPromise returns the inner type T if the receiver represents Promise<T>.
 // If not a Promise, returns the receiver unchanged.
-func (t *ParamsType) UnwrapPromise() *ParamsType {
+func (t *TSType) UnwrapPromise() *TSType {
 	if t == nil || t.inner == nil {
 		return t
 	}
 	if t.inner.PromiseInner != nil {
-		return &ParamsType{inner: t.inner.PromiseInner}
+		return &TSType{inner: t.inner.PromiseInner}
 	}
 	return t
 }
 
 // --- Manipulation (returns new copies) ---
 
-// RemoveProperties returns a new ParamsType with the named properties removed.
+// RemoveProperties returns a new TSType with the named properties removed.
 // The original is not modified.
-func (t *ParamsType) RemoveProperties(names ...string) *ParamsType {
+func (t *TSType) RemoveProperties(names ...string) *TSType {
 	if t == nil || t.inner == nil {
 		return t
 	}
@@ -164,14 +178,14 @@ func (t *ParamsType) RemoveProperties(names ...string) *ParamsType {
 	}
 	cp.Required = filteredReq
 
-	return &ParamsType{inner: &cp}
+	return &TSType{inner: &cp}
 }
 
-// SetPropertyLiteral returns a new ParamsType with the named property's
+// SetPropertyLiteral returns a new TSType with the named property's
 // schema replaced by a literal value. The primitive type is inferred:
 // string -> "string", float64/int/int64 -> "number", bool -> "boolean".
 // The original is not modified.
-func (t *ParamsType) SetPropertyLiteral(name string, value any) *ParamsType {
+func (t *TSType) SetPropertyLiteral(name string, value any) *TSType {
 	if t == nil || t.inner == nil {
 		return t
 	}
@@ -202,12 +216,12 @@ func (t *ParamsType) SetPropertyLiteral(name string, value any) *ParamsType {
 	}
 	cp.Properties = newProps
 
-	return &ParamsType{inner: &cp}
+	return &TSType{inner: &cp}
 }
 
-// SetPropertyType returns a new ParamsType with the named property's
-// schema replaced by the given ParamsType. The original is not modified.
-func (t *ParamsType) SetPropertyType(name string, typ *ParamsType) *ParamsType {
+// SetPropertyType returns a new TSType with the named property's
+// schema replaced by the given TSType. The original is not modified.
+func (t *TSType) SetPropertyType(name string, typ *TSType) *TSType {
 	if t == nil || t.inner == nil {
 		return t
 	}
@@ -236,7 +250,7 @@ func (t *ParamsType) SetPropertyType(name string, typ *ParamsType) *ParamsType {
 	}
 	cp.Properties = newProps
 
-	return &ParamsType{inner: &cp}
+	return &TSType{inner: &cp}
 }
 
 // inferPrimitiveType returns the JSON Schema primitive type for a Go value.
@@ -254,25 +268,25 @@ func inferPrimitiveType(v any) string {
 }
 
 
-// wrapParamsType wraps a tsType in a ParamsType facade.
-func wrapParamsType(t *tsType) *ParamsType {
+// wrapTSType wraps a tsType in a TSType facade.
+func wrapTSType(t *tsType) *TSType {
 	if t == nil {
 		return nil
 	}
-	return &ParamsType{inner: t}
+	return &TSType{inner: t}
 }
 
 // ---------------------------------------------------------------------------
-// FuncSig facade
+// FuncSignature facade
 // ---------------------------------------------------------------------------
 
-// FuncSig is a facade that hides tsFuncSig internals behind a clean public API.
-type FuncSig struct {
+// FuncSignature is a facade that hides tsFuncSig internals behind a clean public API.
+type FuncSignature struct {
 	inner *tsFuncSig
 }
 
 // Description returns the function's JSDoc description.
-func (f *FuncSig) Description() string {
+func (f *FuncSignature) Description() string {
 	if f == nil || f.inner == nil {
 		return ""
 	}
@@ -286,7 +300,7 @@ type JSDocTag struct {
 }
 
 // Tags returns all raw JSDoc tags from the function's documentation.
-func (f *FuncSig) Tags() []JSDocTag {
+func (f *FuncSignature) Tags() []JSDocTag {
 	if f == nil || f.inner == nil {
 		return nil
 	}
@@ -300,7 +314,7 @@ func (f *FuncSig) Tags() []JSDocTag {
 // FuncParam is a facade over a single function parameter.
 type FuncParam struct {
 	name        string
-	typ         *ParamsType
+	typ         *TSType
 	description string
 	optional    bool
 }
@@ -308,8 +322,8 @@ type FuncParam struct {
 // Name returns the parameter name.
 func (p *FuncParam) Name() string { return p.name }
 
-// Type returns the parameter type as a ParamsType facade.
-func (p *FuncParam) Type() *ParamsType { return p.typ }
+// Type returns the parameter type as a TSType facade.
+func (p *FuncParam) Type() *TSType { return p.typ }
 
 // Description returns the parameter's JSDoc description.
 func (p *FuncParam) Description() string { return p.description }
@@ -318,7 +332,7 @@ func (p *FuncParam) Description() string { return p.description }
 func (p *FuncParam) Optional() bool { return p.optional }
 
 // Params returns the function's parameters as facade types.
-func (f *FuncSig) Params() []FuncParam {
+func (f *FuncSignature) Params() []FuncParam {
 	if f == nil || f.inner == nil {
 		return nil
 	}
@@ -326,7 +340,7 @@ func (f *FuncSig) Params() []FuncParam {
 	for i, p := range f.inner.Params {
 		out[i] = FuncParam{
 			name:        p.Name,
-			typ:         wrapParamsType(p.Type),
+			typ:         wrapTSType(p.Type),
 			description: p.Description,
 			optional:    p.Optional,
 		}
@@ -334,21 +348,20 @@ func (f *FuncSig) Params() []FuncParam {
 	return out
 }
 
-// Return returns the function's return type as a ParamsType facade.
+// Return returns the function's return type as a TSType facade.
 // For async functions this includes the Promise wrapper (e.g. Promise<string>).
-func (f *FuncSig) Return() *ParamsType {
+func (f *FuncSignature) Return() *TSType {
 	if f == nil || f.inner == nil || f.inner.ReturnType == nil {
 		return nil
 	}
-	return &ParamsType{inner: f.inner.ReturnType}
+	return &TSType{inner: f.inner.ReturnType}
 }
 
 
-// CombinedParamsType returns a synthetic object ParamsType that combines all
-// function parameters into a single object type. Each param becomes a property,
-// with optional params excluded from "required". This is the shape needed for
-// MCP JSON Schema.
-func (f *FuncSig) CombinedParamsType() *ParamsType {
+// ParamsAsObject synthesizes an object TSType from all function parameters.
+// Each param becomes a property, with optional params excluded from "required".
+// This is the shape needed for MCP JSON Schema.
+func (f *FuncSignature) ParamsAsObject() *TSType {
 	if f == nil || f.inner == nil || len(f.inner.Params) == 0 {
 		return nil
 	}
@@ -394,11 +407,11 @@ func (f *FuncSig) CombinedParamsType() *ParamsType {
 	if f.inner.Description != "" {
 		combined.Annotations = &tsAnnotations{Description: f.inner.Description}
 	}
-	return &ParamsType{inner: combined}
+	return &TSType{inner: combined}
 }
 
 // ToTS renders the function signature as a TypeScript function type expression.
-func (f *FuncSig) ToTS() string {
+func (f *FuncSignature) ToTS() string {
 	if f == nil || f.inner == nil {
 		return "() => void"
 	}
@@ -406,7 +419,7 @@ func (f *FuncSig) ToTS() string {
 }
 
 // ToJSONSchema converts the first parameter's type to a JSON Schema map.
-func (f *FuncSig) ToJSONSchema() map[string]any {
+func (f *FuncSignature) ToJSONSchema() map[string]any {
 	if f == nil || f.inner == nil {
 		return nil
 	}

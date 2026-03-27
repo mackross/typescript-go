@@ -67,12 +67,12 @@ export default async function tool(params: { query: string; limit?: number }, ct
 		t.Fatal("expected Sig.Params()[0].Type().IsObject() to be true")
 	}
 
-	// ParamsType should be non-nil and wrap the same inner type.
+	// TSType should be non-nil and wrap the same inner type.
 	if meta.ParamsType == nil {
-		t.Fatal("expected ParamsType to be non-nil")
+		t.Fatal("expected TSType to be non-nil")
 	}
 	if meta.ParamsType.ToTS() != sigParams[0].Type().ToTS() {
-		t.Fatal("expected ParamsType.ToTS() to match Sig.Params()[0].Type().ToTS()")
+		t.Fatal("expected TSType.ToTS() to match Sig.Params()[0].Type().ToTS()")
 	}
 }
 
@@ -244,7 +244,7 @@ export default function(a: number, b: number, options: Options): number {
 
 }
 
-func TestCombinedParamsType(t *testing.T) {
+func TestParamsAsObject(t *testing.T) {
 	t.Parallel()
 
 	meta, err := toolbox.ExtractToolMetadata(context.Background(), toolbox.ExtractInput{
@@ -302,10 +302,10 @@ export default function(query: string, limit: number, offset?: number, filters?:
 		t.Fatal("expected params[3] (filters) to be optional")
 	}
 
-	// Verify CombinedParamsType JSON Schema.
-	combined := sig.CombinedParamsType()
+	// Verify ParamsAsObject JSON Schema.
+	combined := sig.ParamsAsObject()
 	if combined == nil {
-		t.Fatal("expected CombinedParamsType to be non-nil")
+		t.Fatal("expected ParamsAsObject to be non-nil")
 	}
 	schema := combined.ToJSONSchema()
 
@@ -417,7 +417,7 @@ export default function(query: string, limit: number, offset?: number, filters?:
 	}
 }
 
-func TestParamsTypeProperties(t *testing.T) {
+func TestTSTypeProperties(t *testing.T) {
 	t.Parallel()
 
 	meta, err := toolbox.ExtractToolMetadata(context.Background(), toolbox.ExtractInput{
@@ -446,10 +446,10 @@ export default function(query: string, limit: number, offset?: number): string {
 		t.Fatal("expected Sig to be populated")
 	}
 
-	// Use CombinedParamsType which properly populates Required.
-	combined := sig.CombinedParamsType()
+	// Use ParamsAsObject which properly populates Required.
+	combined := sig.ParamsAsObject()
 	if combined == nil {
-		t.Fatal("expected CombinedParamsType to be non-nil")
+		t.Fatal("expected ParamsAsObject to be non-nil")
 	}
 
 	props := combined.Properties()
@@ -503,7 +503,7 @@ export default function(query: string, limit: number, offset?: number): string {
 	}
 
 	// Verify nil receiver returns nil.
-	var nilType *toolbox.ParamsType
+	var nilType *toolbox.TSType
 	if nilType.Properties() != nil {
 		t.Fatal("expected nil receiver to return nil")
 	}

@@ -19,8 +19,8 @@ import (
 type ToolMetadata struct {
 	Description  string
 	ParamsSchema Schema         // keep for backward compat
-	ParamsType   *ParamsType    // facade wrapper around the first param's tsType
-	Sig          *FuncSig       // facade wrapper around the full function signature
+	ParamsType   *TSType    // facade wrapper around the first param's tsType
+	Sig          *FuncSignature       // facade wrapper around the full function signature
 }
 
 type ExtractInput struct {
@@ -227,9 +227,9 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 			}
 
 			meta.ParamsSchema = tsTypeToJSON(paramType)
-			meta.ParamsType = &ParamsType{inner: paramType}
+			meta.ParamsType = &TSType{inner: paramType}
 		}
-		meta.Sig = &FuncSig{inner: funcSig}
+		meta.Sig = &FuncSignature{inner: funcSig}
 	}
 
 	return meta, nil

@@ -498,7 +498,7 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 				t.Fatalf("ExtractToolMetadata failed for generated TS:\n%s\nerror: %v", toolSource, err)
 			}
 			if meta.ParamsType == nil || meta.ParamsType.inner == nil {
-				t.Fatalf("ExtractToolMetadata returned nil ParamsTSType for generated TS:\n%s", toolSource)
+				t.Fatalf("ExtractToolMetadata returned nil ParamsType for generated TS:\n%s", toolSource)
 			}
 
 			// Compare tsType trees directly after normalizing
