@@ -345,6 +345,9 @@ func (f *FuncSig) CombinedParamsType() *ParamsType {
 		Required:    required,
 		Definitions: defs,
 	}
+	if f.inner.Description != "" {
+		combined.Annotations = &tsAnnotations{Description: f.inner.Description}
+	}
 	return &ParamsType{inner: combined}
 }
 

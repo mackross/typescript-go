@@ -314,6 +314,12 @@ export default function(query: string, limit: number, offset?: number, filters?:
 		t.Fatalf("expected object schema type, got %q", schemaType)
 	}
 
+	// Verify the top-level description comes from the function's JSDoc.
+	schemaDesc, _ := schema["description"].(string)
+	if schemaDesc != "Search with multiple parameters." {
+		t.Fatalf("expected top-level description %q, got %q", "Search with multiple parameters.", schemaDesc)
+	}
+
 	props, ok := schema["properties"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected properties in schema, got %v", schema)
