@@ -35,6 +35,40 @@ func (t *ParamsType) Declarations() string {
 
 // --- Inspection ---
 
+// PropertyInfo describes a single property of an object ParamsType.
+type PropertyInfo struct {
+	Name        string
+	Type        *ParamsType
+	Description string
+	Optional    bool
+}
+
+// Properties returns the properties of an object ParamsType with their
+// names, types, descriptions, and optionality.
+func (t *ParamsType) Properties() []PropertyInfo {
+	if t == nil || t.inner == nil {
+		return nil
+	}
+	requiredSet := make(map[string]bool, len(t.inner.Required))
+	for _, r := range t.inner.Required {
+		requiredSet[r] = true
+	}
+	out := make([]PropertyInfo, len(t.inner.Properties))
+	for i, p := range t.inner.Properties {
+		var desc string
+		if p.Schema != nil && p.Schema.Annotations != nil {
+			desc = p.Schema.Annotations.Description
+		}
+		out[i] = PropertyInfo{
+			Name:        p.Name,
+			Type:        &ParamsType{inner: p.Schema},
+			Description: desc,
+			Optional:    !requiredSet[p.Name],
+		}
+	}
+	return out
+}
+
 // PropertyNames returns the names of all properties on an object type.
 // Returns nil for non-object types.
 func (t *ParamsType) PropertyNames() []string {
@@ -68,6 +102,18 @@ func (t *ParamsType) IsObject() bool {
 		return false
 	}
 	return t.inner.Kind == tsTypeObject
+}
+
+// DefinitionTypes returns the $ref definition types as a map of name to ParamsType.
+func (t *ParamsType) DefinitionTypes() map[string]*ParamsType {
+	if t == nil || t.inner == nil || len(t.inner.Definitions) == 0 {
+		return nil
+	}
+	out := make(map[string]*ParamsType, len(t.inner.Definitions))
+	for name, def := range t.inner.Definitions {
+		out[name] = &ParamsType{inner: def}
+	}
+	return out
 }
 
 // --- Promise unwrapping ---

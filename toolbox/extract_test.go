@@ -417,6 +417,98 @@ export default function(query: string, limit: number, offset?: number, filters?:
 	}
 }
 
+func TestParamsTypeProperties(t *testing.T) {
+	t.Parallel()
+
+	meta, err := toolbox.ExtractToolMetadata(context.Background(), toolbox.ExtractInput{
+		Files: fstest.MapFS{
+			"main.ts": {
+				Data: []byte(`/**
+ * Search with filters.
+ * @param query - The search query
+ * @param limit - Maximum results
+ * @param offset - Starting offset
+ */
+export default function(query: string, limit: number, offset?: number): string {
+  return query;
+}
+`),
+			},
+		},
+		Entry: "main.ts",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sig := meta.Sig
+	if sig == nil {
+		t.Fatal("expected Sig to be populated")
+	}
+
+	// Use CombinedParamsType which properly populates Required.
+	combined := sig.CombinedParamsType()
+	if combined == nil {
+		t.Fatal("expected CombinedParamsType to be non-nil")
+	}
+
+	props := combined.Properties()
+	if len(props) != 3 {
+		t.Fatalf("expected 3 properties, got %d", len(props))
+	}
+
+	// Verify "query" property.
+	if props[0].Name != "query" {
+		t.Fatalf("expected props[0].Name = %q, got %q", "query", props[0].Name)
+	}
+	if props[0].Description != "The search query" {
+		t.Fatalf("expected props[0].Description = %q, got %q", "The search query", props[0].Description)
+	}
+	if props[0].Optional {
+		t.Fatal("expected props[0] (query) to not be optional")
+	}
+	if props[0].Type == nil {
+		t.Fatal("expected props[0].Type to be non-nil")
+	}
+	if got := props[0].Type.ToTS(); got != "string" {
+		t.Fatalf("expected props[0].Type.ToTS() = %q, got %q", "string", got)
+	}
+
+	// Verify "limit" property.
+	if props[1].Name != "limit" {
+		t.Fatalf("expected props[1].Name = %q, got %q", "limit", props[1].Name)
+	}
+	if props[1].Description != "Maximum results" {
+		t.Fatalf("expected props[1].Description = %q, got %q", "Maximum results", props[1].Description)
+	}
+	if props[1].Optional {
+		t.Fatal("expected props[1] (limit) to not be optional")
+	}
+
+	// Verify "offset" property (optional).
+	if props[2].Name != "offset" {
+		t.Fatalf("expected props[2].Name = %q, got %q", "offset", props[2].Name)
+	}
+	if props[2].Description != "Starting offset" {
+		t.Fatalf("expected props[2].Description = %q, got %q", "Starting offset", props[2].Description)
+	}
+	if !props[2].Optional {
+		t.Fatal("expected props[2] (offset) to be optional")
+	}
+	if props[2].Type == nil {
+		t.Fatal("expected props[2].Type to be non-nil")
+	}
+	if got := props[2].Type.ToTS(); got != "number" {
+		t.Fatalf("expected props[2].Type.ToTS() = %q, got %q", "number", got)
+	}
+
+	// Verify nil receiver returns nil.
+	var nilType *toolbox.ParamsType
+	if nilType.Properties() != nil {
+		t.Fatal("expected nil receiver to return nil")
+	}
+}
+
 func TestExtractReturnTypeUnwrapsPromise(t *testing.T) {
 	t.Parallel()
 
