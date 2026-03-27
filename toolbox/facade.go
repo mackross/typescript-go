@@ -110,6 +110,14 @@ func (t *TSType) HasProperty(name string) bool {
 	return false
 }
 
+// Description returns the type's own description (from JSDoc on the type declaration).
+func (t *TSType) Description() string {
+	if t == nil || t.inner == nil || t.inner.Annotations == nil {
+		return ""
+	}
+	return t.inner.Annotations.Description
+}
+
 // IsObject reports whether the underlying type is an object.
 func (t *TSType) IsObject() bool {
 	if t == nil || t.inner == nil {
