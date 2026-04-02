@@ -276,6 +276,35 @@ func inferPrimitiveType(v any) string {
 }
 
 
+// NewStringLiteralUnion creates a TSType representing a union of string literal
+// types. For a single value it returns a literal type (renders as `"val"` in TS
+// and `{"type":"string","enum":["val"]}` in JSON Schema). For multiple values it
+// returns a union with CollapseLiterals so JSON Schema collapses to a single enum.
+// Returns nil for nil or empty input.
+func NewStringLiteralUnion(values []string) *TSType {
+	if len(values) == 0 {
+		return nil
+	}
+	if len(values) == 1 {
+		return &TSType{inner: &tsType{
+			Kind:             tsTypeUnion,
+			CollapseLiterals: true,
+			Types: []*tsType{
+				{Kind: tsTypeLiteral, LiteralValue: values[0], PrimitiveType: "string"},
+			},
+		}}
+	}
+	children := make([]*tsType, len(values))
+	for i, v := range values {
+		children[i] = &tsType{Kind: tsTypeLiteral, LiteralValue: v, PrimitiveType: "string"}
+	}
+	return &TSType{inner: &tsType{
+		Kind:             tsTypeUnion,
+		CollapseLiterals: true,
+		Types:            children,
+	}}
+}
+
 // wrapTSType wraps a tsType in a TSType facade.
 func wrapTSType(t *tsType) *TSType {
 	if t == nil {
@@ -416,6 +445,31 @@ func (f *FuncSignature) ParamsAsObject() *TSType {
 		combined.Annotations = &tsAnnotations{Description: f.inner.Description}
 	}
 	return &TSType{inner: combined}
+}
+
+// AddParam returns a new FuncSignature with an additional parameter appended.
+// The receiver is not modified. Returns nil if the receiver is nil.
+func (f *FuncSignature) AddParam(name string, typ *TSType, description string, optional bool) *FuncSignature {
+	if f == nil || f.inner == nil {
+		return nil
+	}
+	// Shallow-copy the inner sig.
+	cp := *f.inner
+	// Copy the params slice so we don't mutate the original.
+	newParams := make([]tsFuncParam, len(cp.Params), len(cp.Params)+1)
+	copy(newParams, cp.Params)
+	var inner *tsType
+	if typ != nil {
+		inner = typ.inner
+	}
+	newParams = append(newParams, tsFuncParam{
+		Name:        name,
+		Type:        inner,
+		Description: description,
+		Optional:    optional,
+	})
+	cp.Params = newParams
+	return &FuncSignature{inner: &cp}
 }
 
 // ToTS renders the function signature as a TypeScript function type expression.
