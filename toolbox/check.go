@@ -14,6 +14,7 @@ import (
 	"github.com/microsoft/typescript-go/internal/locale"
 	"github.com/microsoft/typescript-go/internal/lsp/lsproto"
 	"github.com/microsoft/typescript-go/internal/project"
+	"github.com/microsoft/typescript-go/internal/scanner"
 	"github.com/microsoft/typescript-go/internal/vfs/vfstest"
 )
 
@@ -30,6 +31,18 @@ type Diagnostic struct {
 	Code    int32
 	Pos     int
 	End     int
+}
+
+type UnsupportedSyntax struct {
+	File string
+	Kind string
+	Pos  int
+	End  int
+}
+
+type ReplCellCheckResult struct {
+	Diagnostics       []Diagnostic
+	UnsupportedSyntax []UnsupportedSyntax
 }
 
 // CheckSession holds a reusable LSP session for incremental type-checking.
@@ -97,6 +110,49 @@ func Check(ctx context.Context, input CheckInput, session *CheckSession) ([]Diag
 		return nil, session, err
 	}
 	return diags, session, nil
+}
+
+func ReplCellCheck(ctx context.Context, input CheckInput, session *CheckSession) (ReplCellCheckResult, *CheckSession, error) {
+	if input.Files == nil {
+		return ReplCellCheckResult{}, session, fmt.Errorf("toolbox: files are required")
+	}
+	if input.Entry == "" {
+		return ReplCellCheckResult{}, session, fmt.Errorf("toolbox: entry is required")
+	}
+
+	currentDirectory := input.CurrentDirectory
+	if currentDirectory == "" {
+		currentDirectory = "/"
+	}
+
+	entryPath := rootedPath(currentDirectory, input.Entry)
+
+	if session == nil {
+		s, err := newCheckSession(ctx, input, currentDirectory, entryPath)
+		if err != nil {
+			return ReplCellCheckResult{}, nil, err
+		}
+		session = s
+	} else {
+		files, err := rootedFiles(input.Files, currentDirectory)
+		if err != nil {
+			return ReplCellCheckResult{}, session, err
+		}
+		entryContent, ok := files[entryPath]
+		if !ok {
+			return ReplCellCheckResult{}, session, fmt.Errorf("toolbox: entry %q not found", input.Entry)
+		}
+		version := session.version.Add(1)
+		session.session.DidChangeFile(ctx, session.entryURI, version, []lsproto.TextDocumentContentChangePartialOrWholeDocument{
+			{WholeDocument: &lsproto.TextDocumentContentChangeWholeDocument{Text: entryContent}},
+		})
+	}
+
+	result, err := getReplCellCheckResult(ctx, session)
+	if err != nil {
+		return ReplCellCheckResult{}, session, err
+	}
+	return result, session, nil
 }
 
 func newCheckSession(ctx context.Context, input CheckInput, currentDirectory, entryPath string) (*CheckSession, error) {
@@ -167,6 +223,56 @@ func getDiagnostics(ctx context.Context, cs *CheckSession) ([]Diagnostic, error)
 	}
 
 	return out, nil
+}
+
+func getReplCellCheckResult(ctx context.Context, cs *CheckSession) (ReplCellCheckResult, error) {
+	diagnostics, err := getDiagnostics(ctx, cs)
+	if err != nil {
+		return ReplCellCheckResult{}, err
+	}
+	languageService, err := cs.session.GetLanguageService(ctx, cs.entryURI)
+	if err != nil {
+		return ReplCellCheckResult{}, err
+	}
+	program := languageService.GetProgram()
+	file := program.GetSourceFile(cs.entryPath)
+	if file == nil {
+		return ReplCellCheckResult{}, fmt.Errorf("toolbox: source file %q not found in program", cs.entryPath)
+	}
+	return ReplCellCheckResult{
+		Diagnostics:       diagnostics,
+		UnsupportedSyntax: collectUnsupportedSyntax(file.AsNode()),
+	}, nil
+}
+
+func collectUnsupportedSyntax(root *ast.Node) []UnsupportedSyntax {
+	if root == nil {
+		return nil
+	}
+	out := make([]UnsupportedSyntax, 0)
+	var walk ast.Visitor
+	walk = func(node *ast.Node) bool {
+		if node == nil {
+			return false
+		}
+		if ast.IsModuleDeclaration(node) && node.Flags&ast.NodeFlagsAmbient == 0 && ast.IsIdentifier(node.AsModuleDeclaration().Name()) {
+			sourceFile := ast.GetSourceFileOfNode(node)
+			kind := "namespace"
+			if node.AsModuleDeclaration().Keyword == ast.KindModuleKeyword {
+				kind = "module"
+			}
+			out = append(out, UnsupportedSyntax{
+				File: sourceFile.FileName(),
+				Kind: kind,
+				Pos:  scanner.GetTokenPosOfNode(node, sourceFile, false),
+				End:  node.End(),
+			})
+		}
+		node.ForEachChild(walk)
+		return false
+	}
+	walk(root)
+	return out
 }
 
 func rootedFiles(input fs.FS, currentDirectory string) (map[string]string, error) {

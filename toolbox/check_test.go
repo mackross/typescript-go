@@ -88,6 +88,37 @@ export default add({"a":6,"b":3}, {});`),
 	}
 }
 
+func TestReplCellCheck_ReportsRuntimeNamespaceDeclarations(t *testing.T) {
+	files := fstest.MapFS{
+		"__toolbox_run.ts": &fstest.MapFile{
+			Data: []byte(`export {};
+declare namespace TypesOnly { export const value: number }
+namespace RuntimeNS { export const value = 1 }
+module RuntimeModule { export const value = 2 }
+`),
+		},
+	}
+
+	result, session, err := toolbox.ReplCellCheck(context.Background(), toolbox.CheckInput{
+		Files: files,
+		Entry: "__toolbox_run.ts",
+	}, nil)
+	if err != nil {
+		t.Fatalf("ReplCellCheck: %v", err)
+	}
+	defer session.Close()
+
+	if len(result.UnsupportedSyntax) != 2 {
+		t.Fatalf("unsupported syntax len = %d, want 2", len(result.UnsupportedSyntax))
+	}
+	if result.UnsupportedSyntax[0].Kind != "namespace" {
+		t.Fatalf("first kind = %q, want namespace", result.UnsupportedSyntax[0].Kind)
+	}
+	if result.UnsupportedSyntax[1].Kind != "module" {
+		t.Fatalf("second kind = %q, want module", result.UnsupportedSyntax[1].Kind)
+	}
+}
+
 func BenchmarkCheck(b *testing.B) {
 	files := fstest.MapFS{
 		"tools/calc.add.ts": &fstest.MapFile{Data: []byte(`
