@@ -7,8 +7,6 @@ import (
 	"unicode"
 )
 
-
-
 // tsTypeToTS renders a tsType tree back to TypeScript source text.
 // The output is semantically equivalent to the original type, though
 // not necessarily character-for-character identical.
@@ -215,7 +213,13 @@ func renderObject(t *tsType) string {
 	var parts []string
 	for _, prop := range t.Properties {
 		optional := ""
-		if !reqSet[prop.Name] {
+		isOptional := prop.Optional
+		if reqSet[prop.Name] {
+			isOptional = false
+		} else if len(reqSet) > 0 {
+			isOptional = true
+		}
+		if isOptional {
 			optional = "?"
 		}
 		propType := tsTypeToTS(prop.Schema)

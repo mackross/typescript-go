@@ -269,7 +269,7 @@ func TestTSTypeToJSONNoDependency(t *testing.T) {
 		Properties: []tsProperty{
 			{Name: "name", Schema: &tsType{Kind: tsTypePrimitive, PrimitiveType: "string"}},
 		},
-		Required:             []string{"name"},
+		Required:                 []string{"name"},
 		AdditionalPropertiesBool: boolPtr(false),
 	}
 	schema := tsTypeToJSON(tsType)

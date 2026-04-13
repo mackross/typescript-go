@@ -609,7 +609,7 @@ func TestTSFuncSigToTSRoundTrip(t *testing.T) {
 						{Name: "text", Schema: &tsType{Kind: tsTypePrimitive, PrimitiveType: "string"}},
 						{Name: "retries", Schema: &tsType{Kind: tsTypePrimitive, PrimitiveType: "number"}},
 					},
-					Required:             []string{"text", "retries"},
+					Required:                 []string{"text", "retries"},
 					AdditionalPropertiesBool: boolPtr(false),
 				},
 			},
@@ -631,9 +631,9 @@ func TestTSFuncSigToTSRoundTrip(t *testing.T) {
 // TestTSTypeToTSBasicTypes verifies tsTypeToTS for basic type kinds.
 func TestTSTypeToTSBasicTypes(t *testing.T) {
 	tests := []struct {
-		name     string
-		tsType   *tsType
-		wantNot  string // should not produce this
+		name    string
+		tsType  *tsType
+		wantNot string // should not produce this
 	}{
 		{
 			name:    "primitive string",
@@ -677,7 +677,7 @@ func TestTSTypeToTSBasicTypes(t *testing.T) {
 				Properties: []tsProperty{
 					{Name: "name", Schema: &tsType{Kind: tsTypePrimitive, PrimitiveType: "string"}},
 				},
-				Required:             []string{"name"},
+				Required:                 []string{"name"},
 				AdditionalPropertiesBool: boolPtr(false),
 			},
 			wantNot: "",

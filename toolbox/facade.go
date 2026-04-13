@@ -33,6 +33,19 @@ func (t *TSType) Declarations() string {
 	return tsTypeDeclarationsToTS(t.inner)
 }
 
+// CannotJSON reports why this type cannot be faithfully supplied over a JSON
+// transport. It returns nil when the type is JSON-safe.
+func (t *TSType) CannotJSON() []string {
+	if t == nil || t.inner == nil {
+		return nil
+	}
+	reasons := cannotJSONType(t.inner, t.inner.Definitions, "", false, map[*tsType]bool{})
+	if len(reasons) == 0 {
+		return nil
+	}
+	return dedupeStrings(reasons)
+}
+
 // --- Inspection ---
 
 // PropertyInfo describes a single property of an object TSType.
@@ -59,11 +72,17 @@ func (t *TSType) Properties() []PropertyInfo {
 		if p.Schema != nil && p.Schema.Annotations != nil {
 			desc = p.Schema.Annotations.Description
 		}
+		optional := p.Optional
+		if requiredSet[p.Name] {
+			optional = false
+		} else if len(requiredSet) > 0 {
+			optional = true
+		}
 		out[i] = PropertyInfo{
 			Name:        p.Name,
 			Type:        &TSType{inner: p.Schema},
 			Description: desc,
-			Optional:    !requiredSet[p.Name],
+			Optional:    optional,
 		}
 	}
 	return out
@@ -275,7 +294,6 @@ func inferPrimitiveType(v any) string {
 	}
 }
 
-
 // NewStringLiteralUnion creates a TSType representing a union of string literal
 // types. For a single value it returns a literal type (renders as `"val"` in TS
 // and `{"type":"string","enum":["val"]}` in JSON Schema). For multiple values it
@@ -393,7 +411,6 @@ func (f *FuncSignature) Return() *TSType {
 	}
 	return &TSType{inner: f.inner.ReturnType}
 }
-
 
 // ParamsAsObject synthesizes an object TSType from all function parameters.
 // Each param becomes a property, with optional params excluded from "required".

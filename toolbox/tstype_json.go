@@ -2,8 +2,6 @@ package toolbox
 
 import "sort"
 
-
-
 // tsTypeToJSON converts a tsType tree into a JSON Schema map[string]any.
 // This function does NOT depend on the checker or any internal/ packages.
 func tsTypeToJSON(t *tsType) map[string]any {

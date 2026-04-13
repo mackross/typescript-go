@@ -35,9 +35,10 @@ type Generator struct {
 	symbolsByName map[string][]*ast.Symbol
 	overrides     map[string]Schema
 
-	definitions   map[string]Schema
-	inProgress    map[string]bool
-	nullableTypes map[*ast.Symbol]bool
+	definitions     map[string]Schema
+	typeDefinitions map[string]*tsType
+	inProgress      map[string]bool
+	nullableTypes   map[*ast.Symbol]bool
 
 	// When true, literal values should use "enum" format instead of "const".
 	// Set during concrete type resolution (e.g. generic instantiations).
@@ -73,6 +74,7 @@ func NewGenerator(program *compiler.Program, opts Options) (*Generator, error) {
 		symbolsByName:      map[string][]*ast.Symbol{},
 		overrides:          map[string]Schema{},
 		definitions:        map[string]Schema{},
+		typeDefinitions:    map[string]*tsType{},
 		inProgress:         map[string]bool{},
 		nullableTypes:      map[*ast.Symbol]bool{},
 		symbolOutputName:   map[*ast.Symbol]string{},
@@ -1599,7 +1601,7 @@ func (g *Generator) propertySchema(prop *ast.Symbol, propType *checker.Type, par
 		return schema, nil
 	}
 	if typeNode := declaredTypeNode(decl); typeNode != nil {
-			switch {
+		switch {
 		case isArrayTypeNode(typeNode), typeNode.Kind == ast.KindIntersectionType:
 			schema, ok, err := g.schemaFromTypeNode(typeNode)
 			if err != nil {
@@ -2430,9 +2432,9 @@ func (g *Generator) hasRecursiveExportedAliasRef(sym *ast.Symbol) bool {
 	return false
 }
 
-
 func (g *Generator) reset() {
 	g.definitions = map[string]Schema{}
+	g.typeDefinitions = map[string]*tsType{}
 	g.inProgress = map[string]bool{}
 	g.nullableTypes = map[*ast.Symbol]bool{}
 	g.symbolOutputName = map[*ast.Symbol]string{}
@@ -2992,7 +2994,6 @@ func cloneValue(v any) any {
 		return v
 	}
 }
-
 
 // resolveAliasRefName resolves a type reference through aliases to get the
 // underlying generic type name.  For example, SomeAlias<"alias"> where

@@ -19,8 +19,8 @@ import (
 type ToolMetadata struct {
 	Description  string
 	ParamsSchema Schema         // keep for backward compat
-	ParamsType   *TSType    // facade wrapper around the first param's tsType
-	Sig          *FuncSignature       // facade wrapper around the full function signature
+	ParamsType   *TSType        // facade wrapper around the first param's tsType
+	Sig          *FuncSignature // facade wrapper around the full function signature
 }
 
 type ExtractInput struct {
@@ -221,6 +221,10 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 				}
 				for name, def := range gen.definitions {
 					if _, exists := paramType.Definitions[name]; !exists {
+						if tdef, ok := gen.typeDefinitions[name]; ok && tdef != nil {
+							paramType.Definitions[name] = tdef
+							continue
+						}
 						paramType.Definitions[name] = schemaMapToTSType(def)
 					}
 				}

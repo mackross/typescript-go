@@ -11,6 +11,18 @@ type tsType struct {
 	// Kind selects which variant of the type this node represents.
 	Kind tsTypeKind
 
+	// CannotJSONKind captures compact JSON-incompatibility facts that the
+	// checker can see during extraction but the JSON-schema-shaped fields would
+	// otherwise erase, such as Date, Promise, Map, bigint, symbol, any, and
+	// unknown.
+	CannotJSONKind cannotJSONKind
+
+	// IncludesUndefined reports that the original TypeScript type included
+	// undefined or void as a union member. This is tracked separately from
+	// property optionality so callers can distinguish `foo?: string` from
+	// `foo: string | undefined`.
+	IncludesUndefined bool
+
 	// --- Primitive ---
 
 	// PrimitiveType is the TS primitive: "string", "number", "boolean",
@@ -162,6 +174,10 @@ const (
 type tsProperty struct {
 	Name   string
 	Schema *tsType
+	// Optional reflects TypeScript optional-property syntax (`foo?: T`). It is
+	// tracked separately from JSON Schema's required list so callers can
+	// distinguish `foo?: T` from `foo: T | undefined`.
+	Optional bool
 }
 
 // tsPatternProperty represents a pattern property in an object type.
@@ -206,6 +222,39 @@ type tsFuncParam struct {
 	Description string
 	Optional    bool
 }
+
+type cannotJSONKind uint8
+
+const (
+	cannotJSONNone cannotJSONKind = iota
+	cannotJSONAny
+	cannotJSONUnknown
+	cannotJSONObject
+	cannotJSONDate
+	cannotJSONRegExp
+	cannotJSONError
+	cannotJSONPromise
+	cannotJSONFunction
+	cannotJSONMap
+	cannotJSONSet
+	cannotJSONWeakMap
+	cannotJSONWeakSet
+	cannotJSONArrayBuffer
+	cannotJSONDataView
+	cannotJSONInt8Array
+	cannotJSONUint8Array
+	cannotJSONUint8ClampedArray
+	cannotJSONInt16Array
+	cannotJSONUint16Array
+	cannotJSONInt32Array
+	cannotJSONUint32Array
+	cannotJSONFloat32Array
+	cannotJSONFloat64Array
+	cannotJSONBigInt64Array
+	cannotJSONBigUint64Array
+	cannotJSONBigInt
+	cannotJSONSymbol
+)
 
 // inferNumberType returns the number type string to use for enum rendering.
 // It checks the literal children's PrimitiveType to determine whether

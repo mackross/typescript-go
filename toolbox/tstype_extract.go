@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/microsoft/typescript-go/internal/ast"
 	"github.com/microsoft/typescript-go/internal/checker"
@@ -39,6 +40,91 @@ func (g *Generator) ExtractTSType(ctx context.Context, name string) (*tsType, er
 		return nil, err
 	}
 	return schemaToTSType(schema), nil
+}
+
+func (g *Generator) annotateCannotJSONInfo(out *tsType, t *checker.Type, node *ast.Node) *tsType {
+	if out == nil || t == nil {
+		return out
+	}
+	if out.CannotJSONKind == cannotJSONNone {
+		out.CannotJSONKind = g.cannotJSONKindForType(t, node)
+	}
+	return out
+}
+
+func (g *Generator) cannotJSONKindForType(t *checker.Type, node *ast.Node) cannotJSONKind {
+	if t == nil {
+		return cannotJSONNone
+	}
+	if isBuiltinDateType(g.checker, t, node) {
+		return cannotJSONDate
+	}
+	switch {
+	case t.Flags()&checker.TypeFlagsAny != 0:
+		return cannotJSONAny
+	case t.Flags()&checker.TypeFlagsUnknown != 0:
+		return cannotJSONUnknown
+	case t.Flags()&checker.TypeFlagsBigInt != 0 || t.Flags()&checker.TypeFlagsBigIntLiteral != 0:
+		return cannotJSONBigInt
+	case t.Flags()&checker.TypeFlagsESSymbol != 0 || t.Flags()&checker.TypeFlagsUniqueESSymbol != 0:
+		return cannotJSONSymbol
+	}
+	name := strings.TrimSpace(g.typeString(t))
+	if name == "object" {
+		return cannotJSONObject
+	}
+	if strings.Contains(name, "=>") {
+		return cannotJSONFunction
+	}
+	name = trimOuterParens(name)
+	if i := strings.IndexByte(name, '<'); i >= 0 {
+		name = name[:i]
+	}
+	switch strings.TrimSpace(name) {
+	case "Function":
+		return cannotJSONFunction
+	case "Promise":
+		return cannotJSONPromise
+	case "Map", "ReadonlyMap":
+		return cannotJSONMap
+	case "Set", "ReadonlySet":
+		return cannotJSONSet
+	case "WeakMap":
+		return cannotJSONWeakMap
+	case "WeakSet":
+		return cannotJSONWeakSet
+	case "RegExp":
+		return cannotJSONRegExp
+	case "Error":
+		return cannotJSONError
+	case "ArrayBuffer":
+		return cannotJSONArrayBuffer
+	case "DataView":
+		return cannotJSONDataView
+	case "Int8Array":
+		return cannotJSONInt8Array
+	case "Uint8Array":
+		return cannotJSONUint8Array
+	case "Uint8ClampedArray":
+		return cannotJSONUint8ClampedArray
+	case "Int16Array":
+		return cannotJSONInt16Array
+	case "Uint16Array":
+		return cannotJSONUint16Array
+	case "Int32Array":
+		return cannotJSONInt32Array
+	case "Uint32Array":
+		return cannotJSONUint32Array
+	case "Float32Array":
+		return cannotJSONFloat32Array
+	case "Float64Array":
+		return cannotJSONFloat64Array
+	case "BigInt64Array":
+		return cannotJSONBigInt64Array
+	case "BigUint64Array":
+		return cannotJSONBigUint64Array
+	}
+	return cannotJSONNone
 }
 
 // ExtractTSTypeForSymbol extracts a tsType for a specific symbol.
@@ -77,6 +163,10 @@ func (g *Generator) extractTSTypeForSymbol(sym *ast.Symbol) (*tsType, error) {
 		}
 		result.Definitions = make(map[string]*tsType, len(g.definitions))
 		for name, def := range g.definitions {
+			if tdef, ok := g.typeDefinitions[name]; ok && tdef != nil {
+				result.Definitions[name] = tdef
+				continue
+			}
 			result.Definitions[name] = schemaMapToTSType(def)
 		}
 	}
@@ -239,7 +329,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 				if parsed, err := g.concreteTypeSchema(t, node); err != nil {
 					return nil, err
 				} else if len(parsed) > 0 {
-					return schemaToTSType(overlayParsedSchema(parsed, g.annotationsToSchema(ann))), nil
+					return g.annotateCannotJSONInfo(schemaToTSType(overlayParsedSchema(parsed, g.annotationsToSchema(ann))), t, node), nil
 				}
 			}
 			parsed, ok, err := g.schemaFromTypeNode(typeNode)
@@ -256,10 +346,10 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 						} else {
 							delete(annSchema, "description")
 						}
-						return schemaToTSType(overlayParsedSchema(parsed, annSchema)), nil
+						return g.annotateCannotJSONInfo(schemaToTSType(overlayParsedSchema(parsed, annSchema)), t, node), nil
 					}
 				}
-				return schemaToTSType(overlayParsedSchema(parsed, g.annotationsToSchema(ann))), nil
+				return g.annotateCannotJSONInfo(schemaToTSType(overlayParsedSchema(parsed, g.annotationsToSchema(ann))), t, node), nil
 			}
 		}
 		if shouldPreferTypeNodeSchema(g.checker, t, sym) {
@@ -268,7 +358,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 				return nil, err
 			}
 			if ok {
-				return schemaToTSType(overlayParsedSchema(parsed, g.annotationsToSchema(ann))), nil
+				return g.annotateCannotJSONInfo(schemaToTSType(overlayParsedSchema(parsed, g.annotationsToSchema(ann))), t, node), nil
 			}
 		}
 	}
@@ -277,7 +367,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		if err != nil {
 			return nil, err
 		}
-		return schemaToTSType(schema), nil
+		return g.annotateCannotJSONInfo(schemaToTSType(schema), t, node), nil
 	}
 
 	// Literal types from enum members/declarations.
@@ -286,14 +376,21 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		if err != nil {
 			return nil, err
 		}
-		return schemaToTSType(schema), nil
+		return g.annotateCannotJSONInfo(schemaToTSType(schema), t, node), nil
 	}
 	if isEnumSymbol(sym) || (node != nil && node.Kind == ast.KindEnumDeclaration) {
 		schema, err := g.enumSchema(sym, node)
 		if err != nil {
 			return nil, err
 		}
-		return schemaToTSType(schema), nil
+		return g.annotateCannotJSONInfo(schemaToTSType(schema), t, node), nil
+	}
+
+	if isBuiltinDateType(g.checker, t, node) {
+		result.Kind = tsTypePrimitive
+		result.PrimitiveType = "string"
+		result.Format = "date-time"
+		return g.annotateCannotJSONInfo(result, t, node), nil
 	}
 
 	// String/number/boolean/bigint literal types.
@@ -323,7 +420,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 				result.PrimitiveType = "string"
 			}
 		}
-		return result, nil
+		return g.annotateCannotJSONInfo(result, t, node), nil
 	}
 
 	// Union types.
@@ -345,7 +442,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		if pattern := templateLiteralPattern(t); pattern != "" {
 			result.Pattern = pattern
 		}
-		return result, nil
+		return g.annotateCannotJSONInfo(result, t, node), nil
 	}
 
 	// Primitive types.
@@ -356,7 +453,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		} else {
 			result.PrimitiveType = docTypeOverride
 		}
-		return result, nil
+		return g.annotateCannotJSONInfo(result, t, node), nil
 	}
 	if t.Flags()&checker.TypeFlagsBoolean != 0 {
 		result.Kind = tsTypePrimitive
@@ -365,7 +462,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		} else {
 			result.PrimitiveType = docTypeOverride
 		}
-		return result, nil
+		return g.annotateCannotJSONInfo(result, t, node), nil
 	}
 	if t.Flags()&checker.TypeFlagsNumber != 0 {
 		result.Kind = tsTypePrimitive
@@ -374,7 +471,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		} else {
 			result.PrimitiveType = docTypeOverride
 		}
-		return result, nil
+		return g.annotateCannotJSONInfo(result, t, node), nil
 	}
 	if t.Flags()&checker.TypeFlagsBigInt != 0 {
 		result.Kind = tsTypePrimitive
@@ -383,7 +480,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		} else {
 			result.PrimitiveType = docTypeOverride
 		}
-		return result, nil
+		return g.annotateCannotJSONInfo(result, t, node), nil
 	}
 	if t.Flags()&checker.TypeFlagsNull != 0 {
 		result.Kind = tsTypePrimitive
@@ -392,7 +489,12 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		} else {
 			result.PrimitiveType = docTypeOverride
 		}
-		return result, nil
+		return g.annotateCannotJSONInfo(result, t, node), nil
+	}
+	if strings.TrimSpace(g.typeString(t)) == "object" {
+		result.Kind = tsTypeObject
+		result.WildcardObject = true
+		return g.annotateCannotJSONInfo(result, t, node), nil
 	}
 	if t.Flags()&checker.TypeFlagsESSymbol != 0 || t.Flags()&checker.TypeFlagsUniqueESSymbol != 0 {
 		result.Kind = tsTypePrimitive
@@ -401,7 +503,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		} else {
 			result.PrimitiveType = docTypeOverride
 		}
-		return result, nil
+		return g.annotateCannotJSONInfo(result, t, node), nil
 	}
 
 	// Any/unknown.
@@ -409,10 +511,10 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		if parsed, ok, err := g.schemaFromTypeString(g.typeString(t), node); err != nil {
 			return nil, err
 		} else if ok {
-			return schemaToTSType(parsed), nil
+			return g.annotateCannotJSONInfo(schemaToTSType(parsed), t, node), nil
 		}
 		result.Kind = tsTypeAny
-		return result, nil
+		return g.annotateCannotJSONInfo(result, t, node), nil
 	}
 
 	// Tuple types (which are object types with ObjectFlagsTuple).
@@ -431,7 +533,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 
 	// Fallback: empty schema = any.
 	result.Kind = tsTypeAny
-	return result, nil
+	return g.annotateCannotJSONInfo(result, t, node), nil
 }
 
 // typeTSType parallels typeSchema but returns a *tsType.  It handles
@@ -477,8 +579,13 @@ func (g *Generator) typeTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node,
 			ref := &tsType{Kind: tsTypeRef, Ref: g.refURI(name), Nullable: nullable}
 			return ref, nil
 		}
+		if _, ok := g.typeDefinitions[name]; ok {
+			ref := &tsType{Kind: tsTypeRef, Ref: g.refURI(name), Nullable: nullable}
+			return ref, nil
+		}
 		if override, ok := g.overrides[sym.Name]; ok {
 			g.definitions[name] = cloneSchema(override)
+			g.typeDefinitions[name] = schemaToTSType(override)
 			return &tsType{Kind: tsTypeRef, Ref: g.refURI(name)}, nil
 		}
 		g.inProgress[name] = true
@@ -486,13 +593,14 @@ func (g *Generator) typeTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node,
 		if defNode == nil {
 			defNode = node
 		}
-		def, err := g.emitType(t, sym, defNode)
+		def, err := g.extractTSType(t, sym, defNode)
 		delete(g.inProgress, name)
 		if err != nil {
 			return nil, err
 		}
 		if def != nil {
-			g.definitions[name] = def
+			g.typeDefinitions[name] = def
+			g.definitions[name] = tsTypeToJSON(def)
 		}
 		ref := &tsType{Kind: tsTypeRef, Ref: g.refURI(name), Nullable: nullable}
 		return ref, nil
@@ -516,6 +624,7 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 	var simpleTypes []string
 	var complexBranches []*tsType
 	hasNull := false
+	hasUndefined := false
 
 	var memberNodes []*ast.Node
 	var usedMemberNodes []bool
@@ -585,6 +694,10 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 			simpleTypes = append(simpleTypes, "null")
 			continue
 		}
+		if mt.Flags()&checker.TypeFlagsUndefined != 0 || mt.Flags()&checker.TypeFlagsVoid != 0 {
+			hasUndefined = true
+			continue
+		}
 		// Complex types → go through typeTSType for ref handling.
 		child, err := g.typeTSType(mt, memberSym, memberNode, false)
 		if err != nil {
@@ -643,7 +756,10 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 	}
 
 	// Build the result tsType based on what we have.
-	result := &tsType{Annotations: ann}
+	result := &tsType{
+		Annotations:       ann,
+		IncludesUndefined: hasUndefined,
+	}
 
 	// Case 1: Only literals (no simple types, no complex branches).
 	if len(literalTypes) > 0 && len(complexBranches) == 0 && len(simpleTypes) == 0 {
@@ -746,6 +862,7 @@ func (g *Generator) extractUnionTSType(t *checker.UnionType, sym *ast.Symbol, no
 			if hasNull {
 				result.Nullable = true
 			}
+			result.IncludesUndefined = hasUndefined
 			return result, nil
 		}
 		result.Kind = tsTypeUnion
@@ -902,7 +1019,86 @@ func (g *Generator) extractObjectTSType(t *checker.Type, sym *ast.Symbol, node *
 	if err != nil {
 		return nil, err
 	}
-	return schemaToTSType(schema), nil
+	out := g.annotateCannotJSONInfo(schemaToTSType(schema), t, node)
+	if out == nil {
+		return nil, nil
+	}
+	if out.Kind == tsTypeArray {
+		if typeArgs := g.checker.GetTypeArguments(t); len(typeArgs) > 0 {
+			item, err := g.extractTSType(typeArgs[0], nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			out.Items = g.annotateCannotJSONInfo(item, typeArgs[0], nil)
+		}
+		return out, nil
+	}
+
+	props := g.checker.GetPropertiesOfType(t)
+	if len(props) == 0 {
+		props = g.checker.GetApparentProperties(t)
+	}
+	if len(props) == 0 && sym != nil && isLibSymbol(sym) {
+		props = extractInterfaceMembers(sym)
+	}
+	byName := make(map[string]*ast.Symbol, len(props))
+	for _, prop := range props {
+		if prop == nil {
+			continue
+		}
+		byName[prop.Name] = prop
+	}
+	for i := range out.Properties {
+		prop := byName[out.Properties[i].Name]
+		if prop == nil {
+			continue
+		}
+		out.Properties[i].Optional = prop.Flags&ast.SymbolFlagsOptional != 0
+		propType := g.checker.GetTypeOfSymbolAtLocation(prop, nodeOrFallback(node, prop.ValueDeclaration))
+		if propType == nil {
+			continue
+		}
+		refSym := namedRefSymbol(g.checker, propType)
+		if refSym == nil {
+			if psym := propType.Symbol(); psym != nil && !isInternalSymbolName(psym.Name) {
+				refSym = psym
+			}
+		}
+		child, err := g.typeTSType(propType, refSym, nodeOrFallback(node, prop.ValueDeclaration), false)
+		if err != nil {
+			return nil, err
+		}
+		out.Properties[i].Schema = g.annotateCannotJSONInfo(child, propType, nodeOrFallback(node, prop.ValueDeclaration))
+	}
+
+	for _, info := range g.checker.GetIndexInfosOfType(t) {
+		if info == nil || info.ValueType() == nil {
+			continue
+		}
+		refSym := namedRefSymbol(g.checker, info.ValueType())
+		if refSym == nil {
+			if isym := info.ValueType().Symbol(); isym != nil && !isInternalSymbolName(isym.Name) {
+				refSym = isym
+			}
+		}
+		child, err := g.typeTSType(info.ValueType(), refSym, node, false)
+		if err != nil {
+			return nil, err
+		}
+		child = g.annotateCannotJSONInfo(child, info.ValueType(), node)
+		if info.KeyType() != nil && info.KeyType().Flags()&checker.TypeFlagsNumberLike != 0 {
+			for i := range out.PatternProperties {
+				out.PatternProperties[i].Schema = child
+			}
+			continue
+		}
+		out.AdditionalProperties = child
+		if out.AdditionalPropertiesBool != nil && *out.AdditionalPropertiesBool {
+			out.AdditionalPropertiesBool = nil
+		}
+	}
+
+	return out, nil
 }
 
 // collectAnnotations gathers JSDoc annotations from a node and symbol into
@@ -1221,10 +1417,22 @@ func extractSchemaObjectFields(t *tsType, schema map[string]any) {
 		}
 	}
 
+	hadRequired := false
 	if req, ok := schema["required"].([]string); ok {
 		t.Required = req
+		hadRequired = true
 	} else if req, ok := schema["required"].([]any); ok {
 		t.Required = anyToStrings(req)
+		hadRequired = true
+	}
+	if hadRequired && len(t.Properties) > 0 {
+		requiredSet := make(map[string]bool, len(t.Required))
+		for _, name := range t.Required {
+			requiredSet[name] = true
+		}
+		for i := range t.Properties {
+			t.Properties[i].Optional = !requiredSet[t.Properties[i].Name]
+		}
 	}
 
 	if ap, ok := schema["additionalProperties"]; ok {
@@ -1367,4 +1575,3 @@ func toInt(v any) int {
 		return 0
 	}
 }
-
