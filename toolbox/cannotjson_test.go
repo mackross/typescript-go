@@ -321,6 +321,58 @@ export default function tool(input: Status) {
 	}
 }
 
+func TestTSTypeCannotJSONFunctionValuedPropertyReportsFunctionType(t *testing.T) {
+	t.Parallel()
+
+	reasons := extractParamType(t, `export default function tool(input: { cb: () => void }) {
+  return input;
+}`).CannotJSON()
+	if len(reasons) == 0 {
+		t.Fatal("CannotJSON() = nil, want reason")
+	}
+	joined := strings.Join(reasons, "; ")
+	if !strings.Contains(joined, "cb uses function type") {
+		t.Fatalf("CannotJSON() = %#v, want substring %q", reasons, "cb uses function type")
+	}
+	if strings.Contains(joined, "cb uses any") {
+		t.Fatalf("CannotJSON() = %#v, want function-type reason instead of any", reasons)
+	}
+}
+
+func TestTSTypeCannotJSONTypeOfFunctionPropertyReportsFunctionType(t *testing.T) {
+	t.Parallel()
+
+	meta, err := toolbox.ExtractToolMetadata(context.Background(), toolbox.ExtractInput{
+		Files: fstest.MapFS{
+			"main.ts": {Data: []byte(`interface Input {
+  cb: () => void;
+}
+
+export default function tool(input: Input) {
+  return input;
+}`)},
+		},
+		Entry: "main.ts",
+	})
+	if err != nil {
+		t.Fatalf("ExtractToolMetadata: %v", err)
+	}
+	if meta.ParamsType == nil {
+		t.Fatal("ParamsType = nil")
+	}
+	reasons := meta.ParamsType.CannotJSON()
+	if len(reasons) == 0 {
+		t.Fatal("CannotJSON() = nil, want reason")
+	}
+	joined := strings.Join(reasons, "; ")
+	if !strings.Contains(joined, "cb uses function type") {
+		t.Fatalf("CannotJSON() = %#v, want substring %q", reasons, "cb uses function type")
+	}
+	if strings.Contains(joined, "cb uses any") {
+		t.Fatalf("CannotJSON() = %#v, want function-type reason instead of any", reasons)
+	}
+}
+
 func extractParamType(t *testing.T, source string) *toolbox.TSType {
 	t.Helper()
 

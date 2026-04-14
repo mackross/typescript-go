@@ -21,8 +21,10 @@ func cannotJSONType(t *tsType, defs map[string]*tsType, path string, optional bo
 	if t.IncludesUndefined && !optional {
 		reasons = append(reasons, cannotJSONReason(path, "uses undefined"))
 	}
-	if msg := cannotJSONKindReason(t.CannotJSONKind); msg != "" {
-		reasons = append(reasons, cannotJSONReason(path, msg))
+	if t.DocTypeOverride == "" {
+		if msg := cannotJSONKindReason(t.CannotJSONKind); msg != "" {
+			reasons = append(reasons, cannotJSONReason(path, msg))
+		}
 	}
 
 	switch t.Kind {

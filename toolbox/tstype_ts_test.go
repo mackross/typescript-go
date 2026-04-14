@@ -115,6 +115,13 @@ func normalizeTSTypeCore(t *tsType) *tsType {
 	out.Format = ""
 	out.Pattern = ""
 
+	// Plain `any` TS text cannot preserve whether the original tsTypeAny came
+	// from an explicit `any` annotation or from an empty-schema shape that also
+	// renders as `any`.
+	if out.Kind == tsTypeAny && out.CannotJSONKind == cannotJSONAny {
+		out.CannotJSONKind = cannotJSONNone
+	}
+
 	// Strip generator-option-dependent fields.
 	out.AdditionalPropertiesBool = nil
 	// Required is populated only when the generator's opts.Required is true.

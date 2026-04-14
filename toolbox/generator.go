@@ -4332,11 +4332,11 @@ func (g *Generator) refSymbolForType(t *checker.Type, decl *ast.Node) *ast.Symbo
 		return sym
 	}
 	typeNode := declaredTypeNode(decl)
-	if typeNode == nil {
+	if typeNode == nil || typeNode.Kind != ast.KindTypeReference {
 		return nil
 	}
 	sym := symbolForTypeNode(g.checker, typeNode)
-	if sym == nil || isBuiltinDateSymbol(sym) || !g.shouldRefSymbol(sym) {
+	if sym == nil || isBuiltinDateSymbol(sym) || isLibSymbol(sym) || !g.shouldRefSymbol(sym) {
 		return nil
 	}
 	return sym

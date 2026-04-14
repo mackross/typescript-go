@@ -435,7 +435,7 @@ func (f *FuncSignature) ParamsAsObject() *TSType {
 			cp.Annotations.Description = p.Description
 			propType = &cp
 		}
-		props = append(props, tsProperty{Name: p.Name, Schema: propType})
+		props = append(props, tsProperty{Name: p.Name, Schema: propType, Optional: p.Optional})
 		if !p.Optional {
 			required = append(required, p.Name)
 		}

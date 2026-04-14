@@ -97,7 +97,9 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 		return nil, fmt.Errorf("toolbox: no default export function found in %q", input.Entry)
 	}
 
-	gen, err := NewGenerator(program, DefaultOptions())
+	opts := DefaultOptions()
+	opts.TypeOfKeyword = true
+	gen, err := NewGenerator(program, opts)
 	if err != nil {
 		return nil, fmt.Errorf("toolbox: create generator: %w", err)
 	}
@@ -169,11 +171,20 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 
 		funcSig := &tsFuncSig{Description: meta.Description, Tags: rawTags}
 		for _, param := range params {
-			paramType := ch.GetTypeOfSymbolAtLocation(param, sig.Declaration())
-			tsType, err := gen.extractTSType(paramType, param, sig.Declaration())
+			paramNode := sig.Declaration()
+			if len(param.Declarations) > 0 && param.Declarations[0] != nil {
+				paramNode = param.Declarations[0]
+			}
+			paramType := ch.GetTypeOfSymbolAtLocation(param, paramNode)
+			// Use the parameter declaration for checker lookup, but avoid
+			// re-parsing the whole parameter type annotation through the schema
+			// path here. The checker-derived walk below preserves property docs
+			// and optionality without re-entering recursive index-type handling.
+			tsType, err := gen.extractTSType(paramType, param, nil)
 			if err != nil {
 				return nil, fmt.Errorf("toolbox: generate param schema: %w", err)
 			}
+			attachExtractedDefinitions(tsType, gen)
 			optional := false
 			if len(param.Declarations) > 0 {
 				decl := param.Declarations[0]
@@ -192,14 +203,28 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 		// Extract the return type.
 		retType := ch.GetReturnTypeOfSignature(sig)
 		if retType != nil {
-			rt, err := gen.extractTSType(retType, nil, sig.Declaration())
+			rt, err := extractExplicitNamedType(gen, retType, returnAnnotationNode(sig.Declaration()))
+			if err != nil {
+				return nil, fmt.Errorf("toolbox: generate return schema: %w", err)
+			}
+			if rt == nil {
+				rt, err = gen.extractTSType(retType, nil, sig.Declaration())
+			}
 			if err == nil {
+				attachExtractedDefinitions(rt, gen)
 				// For async functions the checker returns Promise<T>;
 				// store unwrapped T inside the tsType so callers can
 				// access it via UnwrapPromise().
 				if promised := ch.GetPromisedTypeOfPromise(retType); promised != nil {
-					urt, err2 := gen.extractTSType(promised, nil, sig.Declaration())
+					urt, err2 := extractExplicitNamedType(gen, promised, promisedAnnotationNode(sig.Declaration()))
+					if err2 != nil {
+						return nil, fmt.Errorf("toolbox: generate promised return schema: %w", err2)
+					}
+					if urt == nil {
+						urt, err2 = gen.extractTSType(promised, nil, sig.Declaration())
+					}
 					if err2 == nil {
+						attachExtractedDefinitions(urt, gen)
 						rt.PromiseInner = urt
 					}
 				}
@@ -208,28 +233,6 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 		}
 		if len(params) > 0 {
 			paramType := funcSig.Params[0].Type
-
-			// Attach any definitions gathered during extraction.
-			// extractTSType populates g.definitions when it encounters
-			// types that should be emitted as definitions (e.g. type
-			// aliases, interfaces), but the returned tsType only has
-			// $ref pointers — the definitions map must be attached to
-			// the root tsType so callers can resolve them.
-			if len(gen.definitions) > 0 && paramType != nil {
-				if paramType.Definitions == nil {
-					paramType.Definitions = make(map[string]*tsType, len(gen.definitions))
-				}
-				for name, def := range gen.definitions {
-					if _, exists := paramType.Definitions[name]; !exists {
-						if tdef, ok := gen.typeDefinitions[name]; ok && tdef != nil {
-							paramType.Definitions[name] = tdef
-							continue
-						}
-						paramType.Definitions[name] = schemaMapToTSType(def)
-					}
-				}
-			}
-
 			meta.ParamsSchema = tsTypeToJSON(paramType)
 			meta.ParamsType = &TSType{inner: paramType}
 		}
@@ -237,6 +240,66 @@ func ExtractToolMetadata(ctx context.Context, input ExtractInput) (*ToolMetadata
 	}
 
 	return meta, nil
+}
+
+func attachExtractedDefinitions(root *tsType, gen *Generator) {
+	if root == nil || gen == nil || len(gen.definitions) == 0 {
+		return
+	}
+	if root.Definitions == nil {
+		root.Definitions = make(map[string]*tsType, len(gen.definitions))
+	}
+	for name, def := range gen.definitions {
+		if tdef, ok := gen.typeDefinitions[name]; ok && tdef != nil {
+			root.Definitions[name] = tdef
+			continue
+		}
+		if _, exists := root.Definitions[name]; exists {
+			continue
+		}
+		root.Definitions[name] = schemaMapToTSType(def)
+	}
+	dropUnreferencedDefinitions(root)
+	dropUnreferencedGenericBaseDefinitions(root)
+	dropUnreferencedBuiltinDefinitions(root, "Array", "ReadonlyArray")
+}
+
+func extractExplicitNamedType(gen *Generator, t *checker.Type, typeNode *ast.Node) (*tsType, error) {
+	if gen == nil || t == nil || typeNode == nil {
+		return nil, nil
+	}
+	refNode := declaredTypeNode(typeNode)
+	if refNode == nil || refNode.Kind != ast.KindTypeReference {
+		return nil, nil
+	}
+	name := entityNameText(refNode.AsTypeReferenceNode().TypeName)
+	if isUtilityTypeName(name) {
+		return nil, nil
+	}
+	sym := symbolForTypeNode(gen.checker, refNode)
+	if sym == nil || isLibSymbol(sym) || !gen.shouldRefSymbol(sym) {
+		return nil, nil
+	}
+	defNode := canonicalDeclaration(sym)
+	if defNode == nil {
+		defNode = refNode
+	}
+	return gen.typeTSType(t, sym, defNode, false)
+}
+
+func returnAnnotationNode(node *ast.Node) *ast.Node {
+	if node == nil {
+		return nil
+	}
+	return node.Type()
+}
+
+func promisedAnnotationNode(node *ast.Node) *ast.Node {
+	typeNode := returnAnnotationNode(node)
+	if typeNode == nil || typeNode.Kind != ast.KindTypeReference || len(typeNode.TypeArguments()) != 1 {
+		return nil
+	}
+	return typeNode.TypeArguments()[0]
 }
 
 func findDefaultExportFunction(ch *checker.Checker, file *ast.SourceFile) *ast.Node {

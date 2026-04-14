@@ -77,9 +77,36 @@ func sanitizeTSIdentifier(name string) string {
 func tsTypeToTSCore(t *tsType) string {
 	switch t.Kind {
 	case tsTypeAny:
+		if t.ExtraFields != nil {
+			if typeof, ok := t.ExtraFields["typeof"].(string); ok && typeof == "function" {
+				return "(...args: any[]) => any"
+			}
+		}
+		switch t.CannotJSONKind {
+		case cannotJSONDate:
+			return "Date"
+		case cannotJSONBigInt:
+			return "bigint"
+		case cannotJSONSymbol:
+			return "symbol"
+		}
+		if t.CannotJSONKind == cannotJSONUnknown {
+			return "unknown"
+		}
 		return "any"
 
 	case tsTypePrimitive:
+		if t.DocTypeOverride != "" {
+			return mapPrimitiveToTS(t.DocTypeOverride)
+		}
+		switch t.CannotJSONKind {
+		case cannotJSONDate:
+			return "Date"
+		case cannotJSONBigInt:
+			return "bigint"
+		case cannotJSONSymbol:
+			return "symbol"
+		}
 		// Handle multi-type primitives stored in ExtraFields (e.g. string | number).
 		if t.ExtraFields != nil {
 			if multiType, ok := t.ExtraFields["type"].([]any); ok {
@@ -189,7 +216,7 @@ func isExternalRef(ref string) bool {
 // renderObject renders a tsTypeObject as TypeScript source text.
 func renderObject(t *tsType) string {
 	if t.WildcardObject {
-		return "Record<string, any>"
+		return "object"
 	}
 
 	// Determine which properties are required.
@@ -216,13 +243,14 @@ func renderObject(t *tsType) string {
 		isOptional := prop.Optional
 		if reqSet[prop.Name] {
 			isOptional = false
-		} else if len(reqSet) > 0 {
-			isOptional = true
 		}
 		if isOptional {
 			optional = "?"
 		}
 		propType := tsTypeToTS(prop.Schema)
+		if prop.Schema != nil && prop.Schema.IncludesUndefined && !isOptional {
+			propType += " | undefined"
+		}
 		if hasJSDoc && prop.Schema != nil && prop.Schema.Kind == tsTypeRef && isExternalRef(prop.Schema.Ref) {
 			// Multi-line JSDoc annotation before the property.
 			parts = append(parts, fmt.Sprintf("/** @$ref %s */\n%s%s: %s", prop.Schema.Ref, prop.Name, optional, propType))
@@ -234,12 +262,18 @@ func renderObject(t *tsType) string {
 	// Handle index signatures from AdditionalProperties.
 	if t.AdditionalProperties != nil {
 		valType := tsTypeToTS(t.AdditionalProperties)
+		if t.AdditionalProperties.IncludesUndefined {
+			valType += " | undefined"
+		}
 		parts = append(parts, fmt.Sprintf("[key: string]: %s", valType))
 	}
 
 	// Handle pattern properties (numeric index, etc.)
 	for _, pp := range t.PatternProperties {
 		valType := tsTypeToTS(pp.Schema)
+		if pp.Schema != nil && pp.Schema.IncludesUndefined {
+			valType += " | undefined"
+		}
 		// Numeric pattern (^[0-9]+$) → [key: number]
 		if pp.Pattern == "^[0-9]+$" {
 			parts = append(parts, fmt.Sprintf("[key: number]: %s", valType))

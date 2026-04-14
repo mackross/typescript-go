@@ -101,6 +101,113 @@ func TestExtractToolMetadataNoJSDoc(t *testing.T) {
 	}
 }
 
+func TestExtractToolMetadataTJSTypeOverrideKeepsRenderedPropertyType(t *testing.T) {
+	t.Parallel()
+
+	meta, err := toolbox.ExtractToolMetadata(context.Background(), toolbox.ExtractInput{
+		Files: fstest.MapFS{
+			"tool.ts": {
+				Data: []byte(`export default function tool(input: {
+  /** @TJS-type string */
+  amount: bigint;
+}) {
+  return input;
+}
+`),
+			},
+		},
+		Entry: "tool.ts",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.ParamsSchema == nil {
+		t.Fatal("expected params schema")
+	}
+	props, ok := meta.ParamsSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected properties map, got %T", meta.ParamsSchema["properties"])
+	}
+	amountSchema, ok := props["amount"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected amount property schema, got %T", props["amount"])
+	}
+	if got := amountSchema["type"]; got != "string" {
+		t.Fatalf("expected schema type %q, got %v", "string", got)
+	}
+	if meta.ParamsType == nil {
+		t.Fatal("expected ParamsType to be non-nil")
+	}
+	renderedProps := meta.ParamsType.Properties()
+	if len(renderedProps) != 1 {
+		t.Fatalf("expected 1 rendered property, got %d", len(renderedProps))
+	}
+	if renderedProps[0].Name != "amount" {
+		t.Fatalf("expected property name %q, got %q", "amount", renderedProps[0].Name)
+	}
+	if renderedProps[0].Type == nil {
+		t.Fatal("expected rendered property type to be non-nil")
+	}
+	if got := renderedProps[0].Type.ToTS(); got != "string" {
+		t.Fatalf("expected rendered property type %q, got %q", "string", got)
+	}
+	if got := meta.ParamsType.ToTS(); got != "{ amount: string }" {
+		t.Fatalf("expected ParamsType.ToTS() = %q, got %q", "{ amount: string }", got)
+	}
+}
+
+func TestExtractToolMetadataPreservesNamedReturnDefinitionsAndOptionalProps(t *testing.T) {
+	t.Parallel()
+
+	meta, err := toolbox.ExtractToolMetadata(context.Background(), toolbox.ExtractInput{
+		Files: fstest.MapFS{
+			"tool.ts": {
+				Data: []byte(`interface Ticket {
+  id: string;
+  assignee?: string;
+}
+
+export default function tool(): Ticket {
+  return { id: "T-1" };
+}
+`),
+			},
+		},
+		Entry: "tool.ts",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.Sig == nil || meta.Sig.Return() == nil {
+		t.Fatal("expected return type")
+	}
+	if got := meta.Sig.Return().ToTS(); got != "Ticket" {
+		t.Fatalf("expected named return type %q, got %q", "Ticket", got)
+	}
+	defs := meta.Sig.Return().DefinitionTypes()
+	ticket := defs["Ticket"]
+	if ticket == nil {
+		t.Fatalf("expected Ticket definition, got %#v", defs)
+	}
+	props := ticket.Properties()
+	if len(props) != 2 {
+		t.Fatalf("expected 2 Ticket properties, got %d", len(props))
+	}
+	var assignee *toolbox.PropertyInfo
+	for i := range props {
+		if props[i].Name == "assignee" {
+			assignee = &props[i]
+			break
+		}
+	}
+	if assignee == nil {
+		t.Fatalf("expected assignee property in %#v", props)
+	}
+	if !assignee.Optional {
+		t.Fatalf("expected assignee to remain optional in %#v", props)
+	}
+}
+
 func TestExtractToolMetadataRecordStringNeverParams(t *testing.T) {
 	t.Parallel()
 

@@ -59,6 +59,9 @@ func (g *Generator) cannotJSONKindForType(t *checker.Type, node *ast.Node) canno
 	if isBuiltinDateType(g.checker, t, node) {
 		return cannotJSONDate
 	}
+	if g.checker.TypeHasCallOrConstructSignatures(t) {
+		return cannotJSONFunction
+	}
 	switch {
 	case t.Flags()&checker.TypeFlagsAny != 0:
 		return cannotJSONAny
@@ -72,9 +75,6 @@ func (g *Generator) cannotJSONKindForType(t *checker.Type, node *ast.Node) canno
 	name := strings.TrimSpace(g.typeString(t))
 	if name == "object" {
 		return cannotJSONObject
-	}
-	if strings.Contains(name, "=>") {
-		return cannotJSONFunction
 	}
 	name = trimOuterParens(name)
 	if i := strings.IndexByte(name, '<'); i >= 0 {
@@ -161,13 +161,25 @@ func (g *Generator) extractTSTypeForSymbol(sym *ast.Symbol) (*tsType, error) {
 				}
 			}
 		}
-		result.Definitions = make(map[string]*tsType, len(g.definitions))
-		for name, def := range g.definitions {
-			if tdef, ok := g.typeDefinitions[name]; ok && tdef != nil {
-				result.Definitions[name] = tdef
-				continue
+		if result.Definitions == nil {
+			result.Definitions = make(map[string]*tsType, len(g.definitions))
+			for name, def := range g.definitions {
+				if tdef, ok := g.typeDefinitions[name]; ok && tdef != nil {
+					result.Definitions[name] = tdef
+					continue
+				}
+				result.Definitions[name] = schemaMapToTSType(def)
 			}
-			result.Definitions[name] = schemaMapToTSType(def)
+		} else {
+			for name := range result.Definitions {
+				if tdef, ok := g.typeDefinitions[name]; ok && tdef != nil {
+					result.Definitions[name] = tdef
+					continue
+				}
+				if def, ok := g.definitions[name]; ok {
+					result.Definitions[name] = schemaMapToTSType(def)
+				}
+			}
 		}
 	}
 
@@ -175,6 +187,8 @@ func (g *Generator) extractTSTypeForSymbol(sym *ast.Symbol) (*tsType, error) {
 	if g.opts.ID != "" {
 		result.ID = g.opts.ID
 	}
+	dropUnreferencedGenericBaseDefinitions(result)
+	dropUnreferencedBuiltinDefinitions(result, "Array", "ReadonlyArray")
 	return result, nil
 }
 
@@ -435,7 +449,7 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 
 	// Template literal types.
 	if t.Flags()&checker.TypeFlagsTemplateLiteral != 0 {
-		result.Kind = tsTypeTemplateLiteral
+		result.Kind = tsTypePrimitive
 		if docTypeOverride == "" {
 			result.PrimitiveType = "string"
 		}
@@ -570,6 +584,16 @@ func (g *Generator) typeTSType(t *checker.Type, sym *ast.Symbol, node *ast.Node,
 
 	if sym != nil && g.shouldRefSymbol(sym) && !root {
 		name := g.outputNameForSymbol(sym)
+		if typeNode := declaredTypeNode(node); typeNode != nil && typeNode.Kind == ast.KindTypeReference && len(typeNode.TypeArguments()) > 0 {
+			typeRefName := entityNameText(typeNode.AsTypeReferenceNode().TypeName)
+			if !isLibSymbol(sym) && !isUtilityTypeName(typeRefName) {
+				if defName := resolveAliasRefName(g.checker, typeNode); defName != "" {
+					name = defName
+				} else {
+					name = typeNodeString(typeNode)
+				}
+			}
+		}
 		nullable := g.isNullableAlias(sym)
 		if g.inProgress[name] {
 			ref := &tsType{Kind: tsTypeRef, Ref: g.refURI(name), Nullable: nullable}
@@ -998,6 +1022,9 @@ func (g *Generator) extractTupleTSType(t *checker.Type, result *tsType) (*tsType
 		if err != nil {
 			return nil, err
 		}
+		if flags&checker.ElementFlagsOptional != 0 {
+			elemSchema.IncludesUndefined = false
+		}
 		result.TupleItems = append(result.TupleItems, elemSchema)
 
 		if flags&checker.ElementFlagsRequired != 0 || flags == 0 {
@@ -1029,7 +1056,7 @@ func (g *Generator) extractObjectTSType(t *checker.Type, sym *ast.Symbol, node *
 			if err != nil {
 				return nil, err
 			}
-			out.Items = g.annotateCannotJSONInfo(item, typeArgs[0], nil)
+			out.Items = preserveSchemaMetadata(g.annotateCannotJSONInfo(item, typeArgs[0], nil), out.Items)
 		}
 		return out, nil
 	}
@@ -1054,32 +1081,43 @@ func (g *Generator) extractObjectTSType(t *checker.Type, sym *ast.Symbol, node *
 			continue
 		}
 		out.Properties[i].Optional = prop.Flags&ast.SymbolFlagsOptional != 0
-		propType := g.checker.GetTypeOfSymbolAtLocation(prop, nodeOrFallback(node, prop.ValueDeclaration))
+		propDecl := prop.ValueDeclaration
+		if propDecl == nil && len(prop.Declarations) > 0 {
+			propDecl = prop.Declarations[0]
+		}
+		propLookupNode := nodeOrFallback(node, propDecl)
+		propType := g.checker.GetTypeOfSymbolAtLocation(prop, propLookupNode)
 		if propType == nil {
 			continue
 		}
-		refSym := namedRefSymbol(g.checker, propType)
-		if refSym == nil {
-			if psym := propType.Symbol(); psym != nil && !isInternalSymbolName(psym.Name) {
-				refSym = psym
-			}
+		if schemaHasTypeof(out.Properties[i].Schema) {
+			out.Properties[i].Schema = g.annotateCannotJSONInfo(out.Properties[i].Schema, propType, propLookupNode)
+			continue
 		}
-		child, err := g.typeTSType(propType, refSym, nodeOrFallback(node, prop.ValueDeclaration), false)
+		refSym := (*ast.Symbol)(nil)
+		if !shouldInlinePropertyType(propType) {
+			refSym = g.refSymbolForType(propType, propDecl)
+		}
+		child, err := g.typeTSType(propType, refSym, propDecl, false)
 		if err != nil {
 			return nil, err
 		}
-		out.Properties[i].Schema = g.annotateCannotJSONInfo(child, propType, nodeOrFallback(node, prop.ValueDeclaration))
+		if out.Properties[i].Optional {
+			child.IncludesUndefined = false
+		}
+		out.Properties[i].Schema = preserveSchemaMetadata(
+			g.annotateCannotJSONInfo(child, propType, propDecl),
+			out.Properties[i].Schema,
+		)
 	}
 
 	for _, info := range g.checker.GetIndexInfosOfType(t) {
 		if info == nil || info.ValueType() == nil {
 			continue
 		}
-		refSym := namedRefSymbol(g.checker, info.ValueType())
-		if refSym == nil {
-			if isym := info.ValueType().Symbol(); isym != nil && !isInternalSymbolName(isym.Name) {
-				refSym = isym
-			}
+		refSym := (*ast.Symbol)(nil)
+		if !shouldInlinePropertyType(info.ValueType()) {
+			refSym = g.refSymbolForType(info.ValueType(), node)
 		}
 		child, err := g.typeTSType(info.ValueType(), refSym, node, false)
 		if err != nil {
@@ -1088,17 +1126,285 @@ func (g *Generator) extractObjectTSType(t *checker.Type, sym *ast.Symbol, node *
 		child = g.annotateCannotJSONInfo(child, info.ValueType(), node)
 		if info.KeyType() != nil && info.KeyType().Flags()&checker.TypeFlagsNumberLike != 0 {
 			for i := range out.PatternProperties {
-				out.PatternProperties[i].Schema = child
+				out.PatternProperties[i].Schema = preserveSchemaMetadata(child, out.PatternProperties[i].Schema)
 			}
 			continue
 		}
-		out.AdditionalProperties = child
+		out.AdditionalProperties = preserveSchemaMetadata(child, out.AdditionalProperties)
 		if out.AdditionalPropertiesBool != nil && *out.AdditionalPropertiesBool {
 			out.AdditionalPropertiesBool = nil
 		}
 	}
 
 	return out, nil
+}
+
+func preserveSchemaMetadata(dst, src *tsType) *tsType {
+	if dst == nil || src == nil {
+		return dst
+	}
+	if src.ExtraFields != nil {
+		if _, ok := src.ExtraFields["typeof"]; ok {
+			return src
+		}
+	}
+	if src.Kind == tsTypeRef && src.Ref != "" {
+		return src
+	}
+	if (src.Kind == tsTypeUnion || src.Kind == tsTypeIntersection) && dst.Kind != src.Kind {
+		return src
+	}
+	if src.Kind == tsTypeEnum && len(src.EnumValues) > 0 && dst.Kind != tsTypeEnum {
+		return src
+	}
+
+	if src.Annotations != nil {
+		dst.Annotations = src.Annotations
+	}
+	if src.DocTypeOverride != "" {
+		dst.DocTypeOverride = src.DocTypeOverride
+	}
+	if src.ID != "" {
+		dst.ID = src.ID
+	}
+	if src.Nullable {
+		dst.Nullable = true
+	}
+	if src.PrimitiveType != "" {
+		dst.PrimitiveType = src.PrimitiveType
+	}
+	if src.Pattern != "" {
+		dst.Pattern = src.Pattern
+	}
+	if src.Format != "" {
+		dst.Format = src.Format
+	}
+	if src.ExtraFields != nil {
+		dst.ExtraFields = copyExtraFields(src.ExtraFields)
+	}
+
+	switch src.Kind {
+	case tsTypeArray:
+		if dst.Kind != tsTypeArray {
+			return src
+		}
+		if src.Items != nil {
+			dst.Items = preserveSchemaMetadata(dst.Items, src.Items)
+		}
+		if src.MinItems != nil {
+			v := *src.MinItems
+			dst.MinItems = &v
+		}
+		if src.MaxItems != nil {
+			v := *src.MaxItems
+			dst.MaxItems = &v
+		}
+		if src.AdditionalItems != nil {
+			dst.AdditionalItems = preserveSchemaMetadata(dst.AdditionalItems, src.AdditionalItems)
+		}
+	case tsTypeTuple:
+		if dst.Kind != tsTypeTuple {
+			return src
+		}
+		if len(src.TupleItems) == len(dst.TupleItems) {
+			for i := range src.TupleItems {
+				dst.TupleItems[i] = preserveSchemaMetadata(dst.TupleItems[i], src.TupleItems[i])
+			}
+		}
+		if src.MinItems != nil {
+			v := *src.MinItems
+			dst.MinItems = &v
+		}
+		if src.MaxItems != nil {
+			v := *src.MaxItems
+			dst.MaxItems = &v
+		}
+		if src.AdditionalItems != nil {
+			dst.AdditionalItems = preserveSchemaMetadata(dst.AdditionalItems, src.AdditionalItems)
+		}
+	case tsTypeObject:
+		if dst.Kind != tsTypeObject {
+			if objectHasExplicitShape(src) {
+				return src
+			}
+			return dst
+		}
+		dst.EmptyObject = src.EmptyObject
+		if src.WildcardObject {
+			dst.WildcardObject = true
+		}
+		if len(src.Required) > 0 {
+			dst.Required = append([]string(nil), src.Required...)
+		}
+		if src.AdditionalPropertiesBool != nil {
+			v := *src.AdditionalPropertiesBool
+			dst.AdditionalPropertiesBool = &v
+		}
+		if src.AdditionalProperties != nil {
+			dst.AdditionalProperties = preserveSchemaMetadata(dst.AdditionalProperties, src.AdditionalProperties)
+		}
+		if len(src.PatternProperties) > 0 && len(src.PatternProperties) == len(dst.PatternProperties) {
+			for i := range src.PatternProperties {
+				dst.PatternProperties[i].Schema = preserveSchemaMetadata(dst.PatternProperties[i].Schema, src.PatternProperties[i].Schema)
+			}
+		}
+		if len(src.Properties) > 0 {
+			byName := make(map[string]*tsType, len(src.Properties))
+			for _, prop := range src.Properties {
+				byName[prop.Name] = prop.Schema
+			}
+			for i := range dst.Properties {
+				if propSchema, ok := byName[dst.Properties[i].Name]; ok {
+					dst.Properties[i].Schema = preserveSchemaMetadata(dst.Properties[i].Schema, propSchema)
+				}
+			}
+		}
+	}
+
+	return dst
+}
+
+func objectHasExplicitShape(t *tsType) bool {
+	if t == nil || t.Kind != tsTypeObject {
+		return false
+	}
+	return len(t.Properties) > 0 ||
+		len(t.Required) > 0 ||
+		t.AdditionalProperties != nil ||
+		t.AdditionalPropertiesBool != nil ||
+		len(t.PatternProperties) > 0 ||
+		t.EmptyObject ||
+		t.WildcardObject
+}
+
+func dropUnreferencedGenericBaseDefinitions(root *tsType) {
+	if root == nil || len(root.Definitions) == 0 {
+		return
+	}
+	refs := referencedDefinitionNames(root)
+	if len(refs) == 0 {
+		return
+	}
+
+	instantiatedBases := map[string]bool{}
+	for name := range root.Definitions {
+		if i := strings.IndexByte(name, '<'); i > 0 {
+			instantiatedBases[name[:i]] = true
+		}
+	}
+	if len(instantiatedBases) == 0 {
+		return
+	}
+
+	for name := range root.Definitions {
+		if refs[name] {
+			continue
+		}
+		if !instantiatedBases[name] {
+			continue
+		}
+		delete(root.Definitions, name)
+	}
+}
+
+func dropUnreferencedDefinitions(root *tsType) {
+	if root == nil || len(root.Definitions) == 0 {
+		return
+	}
+	refs := referencedDefinitionNames(root)
+	if len(refs) == 0 {
+		for name := range root.Definitions {
+			delete(root.Definitions, name)
+		}
+		return
+	}
+	for name := range root.Definitions {
+		if !refs[name] {
+			delete(root.Definitions, name)
+		}
+	}
+}
+
+func dropUnreferencedBuiltinDefinitions(root *tsType, names ...string) {
+	if root == nil || len(root.Definitions) == 0 || len(names) == 0 {
+		return
+	}
+	refs := referencedDefinitionNames(root)
+	for _, name := range names {
+		if refs[name] {
+			continue
+		}
+		delete(root.Definitions, name)
+	}
+}
+
+func referencedDefinitionNames(root *tsType) map[string]bool {
+	refs := map[string]bool{}
+	var visit func(*tsType)
+	visit = func(t *tsType) {
+		if t == nil {
+			return
+		}
+		if t.Kind == tsTypeRef {
+			name := strings.TrimPrefix(t.Ref, "#/definitions/")
+			if name != t.Ref {
+				if refs[name] {
+					return
+				}
+				refs[name] = true
+				visit(root.Definitions[name])
+				return
+			}
+		}
+		for _, prop := range t.Properties {
+			visit(prop.Schema)
+		}
+		visit(t.AdditionalProperties)
+		for _, prop := range t.PatternProperties {
+			visit(prop.Schema)
+		}
+		visit(t.Items)
+		for _, item := range t.TupleItems {
+			visit(item)
+		}
+		visit(t.AdditionalItems)
+		for _, child := range t.Types {
+			visit(child)
+		}
+	}
+	visit(root)
+	return refs
+}
+
+func schemaHasTypeof(t *tsType) bool {
+	if t == nil || t.ExtraFields == nil {
+		return false
+	}
+	_, ok := t.ExtraFields["typeof"]
+	return ok
+}
+
+func shouldInlinePropertyType(t *checker.Type) bool {
+	if t == nil {
+		return true
+	}
+	return t.Flags()&(checker.TypeFlagsAny|
+		checker.TypeFlagsUnknown|
+		checker.TypeFlagsBigInt|
+		checker.TypeFlagsBigIntLiteral|
+		checker.TypeFlagsESSymbol|
+		checker.TypeFlagsUniqueESSymbol) != 0
+}
+
+func copyExtraFields(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // collectAnnotations gathers JSDoc annotations from a node and symbol into
