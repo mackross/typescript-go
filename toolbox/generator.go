@@ -3764,6 +3764,12 @@ func (g *Generator) schemaFromTypeNode(node *ast.Node) (Schema, bool, error) {
 		if isBuiltinDateTypeNode(g.checker, node) {
 			return Schema{"type": "string", "format": "date-time"}, true, nil
 		}
+		if text := nativeObjectTypeNodeText(g.checker, node); text != "" {
+			if err := g.collectNativeObjectTypeArgDefinitions(node); err != nil {
+				return nil, false, err
+			}
+			return Schema{"tsType": text}, true, nil
+		}
 		name := entityNameText(node.AsTypeReferenceNode().TypeName)
 		if (name == "Array" || name == "ReadonlyArray") && len(node.TypeArguments()) == 1 {
 			elem, ok, err := g.schemaFromTypeNode(node.TypeArguments()[0])

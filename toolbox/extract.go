@@ -261,7 +261,14 @@ func attachExtractedDefinitions(root *tsType, gen *Generator) {
 	}
 	dropUnreferencedDefinitions(root)
 	dropUnreferencedGenericBaseDefinitions(root)
-	dropUnreferencedBuiltinDefinitions(root, "Array", "ReadonlyArray")
+	dropUnreferencedBuiltinDefinitions(root,
+		"Array", "ReadonlyArray",
+		"RegExp", "Error", "Map", "ReadonlyMap", "Set", "ReadonlySet",
+		"WeakMap", "WeakSet", "ArrayBuffer", "DataView",
+		"Int8Array", "Uint8Array", "Uint8ClampedArray",
+		"Int16Array", "Uint16Array", "Int32Array", "Uint32Array",
+		"Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array",
+	)
 }
 
 func extractExplicitNamedType(gen *Generator, t *checker.Type, typeNode *ast.Node) (*tsType, error) {

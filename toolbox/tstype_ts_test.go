@@ -538,6 +538,51 @@ func TestTSTypeToTSRoundTrip(t *testing.T) {
 	}
 }
 
+func TestExtractTSTypePreservesNativeGenericTypeText(t *testing.T) {
+	source := `
+type NativeMapValue = number | { count: number };
+
+type NativeInput = {
+  map: Map<string, NativeMapValue>;
+  set: Set<string>;
+};
+
+type NativeOutput = {
+  returnedMap: Map<string, number>;
+  returnedSet: Set<string>;
+};
+
+export default function tool(input: NativeInput): NativeOutput {
+  return { returnedMap: input.map, returnedSet: input.set };
+}
+`
+	meta, err := ExtractToolMetadata(context.Background(), ExtractInput{
+		Files: fstest.MapFS{
+			"tool.ts": {Data: []byte(source)},
+		},
+		Entry: "tool.ts",
+	})
+	if err != nil {
+		t.Fatalf("ExtractToolMetadata: %v", err)
+	}
+
+	params := meta.Sig.Params()
+	if len(params) != 1 {
+		t.Fatalf("param count = %d, want 1", len(params))
+	}
+	if got, want := params[0].Type().ToTS(), "{ map: Map<string, NativeMapValue>; set: Set<string> }"; got != want {
+		t.Fatalf("param type = %q, want %q", got, want)
+	}
+	if got, want := meta.Sig.Return().ToTS(), "{ returnedMap: Map<string, number>; returnedSet: Set<string> }"; got != want {
+		t.Fatalf("return type = %q, want %q", got, want)
+	}
+	if decls := params[0].Type().Declarations(); !strings.Contains(decls, "type NativeMapValue = ") ||
+		!strings.Contains(decls, "number") ||
+		!strings.Contains(decls, "{ count: number }") {
+		t.Fatalf("param declarations missing NativeMapValue:\n%s", decls)
+	}
+}
+
 // hasRecursiveDefinitions checks if a tsType has definitions that contain
 // self-references (directly or indirectly).
 func hasRecursiveDefinitions(t *tsType) bool {

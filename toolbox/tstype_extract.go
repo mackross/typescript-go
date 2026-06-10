@@ -77,6 +77,9 @@ func (g *Generator) cannotJSONKindForType(t *checker.Type, node *ast.Node) canno
 		return cannotJSONObject
 	}
 	name = trimOuterParens(name)
+	if strings.HasSuffix(name, "[]") || strings.HasPrefix(name, "Array<") || strings.HasPrefix(name, "ReadonlyArray<") {
+		return cannotJSONNone
+	}
 	if i := strings.IndexByte(name, '<'); i >= 0 {
 		name = name[:i]
 	}
@@ -404,6 +407,16 @@ func (g *Generator) extractTSType(t *checker.Type, sym *ast.Symbol, node *ast.No
 		result.Kind = tsTypePrimitive
 		result.PrimitiveType = "string"
 		result.Format = "date-time"
+		return g.annotateCannotJSONInfo(result, t, node), nil
+	}
+	if text := g.nativeObjectTypeText(t, node); text != "" {
+		if typeNode := declaredTypeNode(node); typeNode != nil {
+			if err := g.collectNativeObjectTypeArgDefinitions(typeNode); err != nil {
+				return nil, err
+			}
+		}
+		result.Kind = tsTypePrimitive
+		result.DocTypeOverride = text
 		return g.annotateCannotJSONInfo(result, t, node), nil
 	}
 
@@ -1058,6 +1071,20 @@ func (g *Generator) extractObjectTSType(t *checker.Type, sym *ast.Symbol, node *
 			}
 			out.Items = preserveSchemaMetadata(g.annotateCannotJSONInfo(item, typeArgs[0], nil), out.Items)
 		}
+		itemText := ""
+		if g.checker != nil {
+			itemText = nativeArrayElementTypeText(g.checker.TypeToStringEx(t, nil, checker.TypeFormatFlagsNoTruncation|checker.TypeFormatFlagsUseSingleQuotesForStringLiteralType))
+		}
+		if itemText == "" {
+			itemText = nativeArrayElementTypeText(g.typeString(t))
+		}
+		if itemText != "" {
+			out.Items = &tsType{
+				Kind:            tsTypePrimitive,
+				DocTypeOverride: itemText,
+				CannotJSONKind:  nativeObjectCannotJSONKindFromText(itemText),
+			}
+		}
 		return out, nil
 	}
 
@@ -1139,6 +1166,161 @@ func (g *Generator) extractObjectTSType(t *checker.Type, sym *ast.Symbol, node *
 	return out, nil
 }
 
+func (g *Generator) nativeObjectTypeText(t *checker.Type, node *ast.Node) string {
+	if typeNode := declaredTypeNode(node); typeNode != nil {
+		if text := nativeObjectTypeNodeText(g.checker, typeNode); text != "" {
+			return text
+		}
+		return ""
+	}
+	if g.checker != nil {
+		if text := strings.TrimSpace(g.checker.TypeToStringEx(t, nil, checker.TypeFormatFlagsNoTruncation|checker.TypeFormatFlagsUseSingleQuotesForStringLiteralType)); isNativeObjectTypeText(text) {
+			return text
+		}
+	}
+	if !isNativeObjectCannotJSONKind(g.cannotJSONKindForType(t, node)) {
+		return ""
+	}
+	if text := strings.TrimSpace(g.typeString(t)); isNativeObjectTypeText(text) {
+		return text
+	}
+	return ""
+}
+
+func nativeObjectTypeNodeText(ch *checker.Checker, node *ast.Node) string {
+	if node == nil || node.Kind != ast.KindTypeReference {
+		return ""
+	}
+	if !isNativeObjectBaseName(entityNameText(node.AsTypeReferenceNode().TypeName)) {
+		return ""
+	}
+	text := strings.TrimSpace(typeNodeString(node))
+	if file := sourceFileForNode(node); file != nil {
+		if source := file.Text(); node.Pos() >= 0 && node.End() <= len(source) && node.Pos() < node.End() {
+			if raw := strings.TrimSpace(source[node.Pos():node.End()]); isNativeObjectTypeText(raw) {
+				text = raw
+			}
+		}
+	}
+	if !isNativeObjectTypeText(text) {
+		return ""
+	}
+	sym := symbolForTypeNode(ch, node)
+	if sym == nil || isLibSymbol(sym) || (sym.Flags&ast.SymbolFlagsTransient != 0 && isGlobalInterfaceName(sym.Name)) {
+		return text
+	}
+	return ""
+}
+
+func nativeArrayElementTypeText(text string) string {
+	text = strings.TrimSpace(trimOuterParens(text))
+	if strings.HasSuffix(text, "[]") {
+		inner := strings.TrimSpace(strings.TrimSuffix(text, "[]"))
+		if isNativeObjectTypeText(inner) {
+			return inner
+		}
+		return ""
+	}
+	for _, prefix := range []string{"Array<", "ReadonlyArray<"} {
+		if inner, ok := extractGenericArgs(text, prefix); ok && isNativeObjectTypeText(inner) {
+			return inner
+		}
+	}
+	return ""
+}
+
+func (g *Generator) collectNativeObjectTypeArgDefinitions(node *ast.Node) error {
+	if node == nil {
+		return nil
+	}
+	if node.Kind == ast.KindTypeReference {
+		typeName := entityNameText(node.AsTypeReferenceNode().TypeName)
+		if !isNativeObjectBaseName(typeName) {
+			if sym := symbolForTypeNode(g.checker, node); sym != nil && !isLibSymbol(sym) && sym.Flags&ast.SymbolFlagsType != 0 {
+				name := g.outputNameForSymbol(sym)
+				if _, ok := g.typeDefinitions[name]; !ok && !g.inProgress[name] {
+					g.inProgress[name] = true
+					def, err := g.extractTSType(g.declaredTypeForSymbol(sym), sym, canonicalDeclaration(sym))
+					delete(g.inProgress, name)
+					if err != nil {
+						return err
+					}
+					if def != nil {
+						g.typeDefinitions[name] = def
+						g.definitions[name] = tsTypeToJSON(def)
+					}
+				}
+			}
+		}
+		for _, arg := range node.TypeArguments() {
+			if err := g.collectNativeObjectTypeArgDefinitions(arg); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	var err error
+	node.ForEachChild(func(child *ast.Node) bool {
+		err = g.collectNativeObjectTypeArgDefinitions(child)
+		return err != nil
+	})
+	return err
+}
+
+func isNativeObjectCannotJSONKind(kind cannotJSONKind) bool {
+	switch kind {
+	case cannotJSONRegExp,
+		cannotJSONError,
+		cannotJSONMap,
+		cannotJSONSet,
+		cannotJSONWeakMap,
+		cannotJSONWeakSet,
+		cannotJSONArrayBuffer,
+		cannotJSONDataView,
+		cannotJSONInt8Array,
+		cannotJSONUint8Array,
+		cannotJSONUint8ClampedArray,
+		cannotJSONInt16Array,
+		cannotJSONUint16Array,
+		cannotJSONInt32Array,
+		cannotJSONUint32Array,
+		cannotJSONFloat32Array,
+		cannotJSONFloat64Array,
+		cannotJSONBigInt64Array,
+		cannotJSONBigUint64Array:
+		return true
+	default:
+		return false
+	}
+}
+
+func isNativeObjectTypeText(text string) bool {
+	text = strings.TrimSpace(trimOuterParens(text))
+	if text == "" {
+		return false
+	}
+	if strings.HasSuffix(text, "[]") {
+		return false
+	}
+	base := text
+	if idx := strings.IndexByte(base, '<'); idx >= 0 {
+		base = base[:idx]
+	}
+	parts := splitQualifiedName(strings.TrimSpace(base))
+	if len(parts) > 0 {
+		base = parts[len(parts)-1]
+	}
+	return isNativeObjectBaseName(base)
+}
+
+// isNativeObjectBaseName reports whether base names a native global type
+// that cannot be JSON-serialized. JSON-serializable native globals such as
+// Date deliberately return false; see nativeGlobalTypeKinds for the
+// canonical table.
+func isNativeObjectBaseName(base string) bool {
+	return nativeGlobalTypeKinds[strings.TrimSpace(base)] != cannotJSONNone
+}
+
 func preserveSchemaMetadata(dst, src *tsType) *tsType {
 	if dst == nil || src == nil {
 		return dst
@@ -1157,12 +1339,12 @@ func preserveSchemaMetadata(dst, src *tsType) *tsType {
 	if src.Kind == tsTypeEnum && len(src.EnumValues) > 0 && dst.Kind != tsTypeEnum {
 		return src
 	}
+	if src.DocTypeOverride != "" {
+		return src
+	}
 
 	if src.Annotations != nil {
 		dst.Annotations = src.Annotations
-	}
-	if src.DocTypeOverride != "" {
-		dst.DocTypeOverride = src.DocTypeOverride
 	}
 	if src.ID != "" {
 		dst.ID = src.ID
@@ -1345,6 +1527,20 @@ func referencedDefinitionNames(root *tsType) map[string]bool {
 		if t == nil {
 			return
 		}
+		if t.DocTypeOverride != "" {
+			for name := range root.Definitions {
+				if isNativeObjectBaseName(name) {
+					continue
+				}
+				if typeTextReferencesName(t.DocTypeOverride, name) {
+					if refs[name] {
+						continue
+					}
+					refs[name] = true
+					visit(root.Definitions[name])
+				}
+			}
+		}
 		if t.Kind == tsTypeRef {
 			name := strings.TrimPrefix(t.Ref, "#/definitions/")
 			if name != t.Ref {
@@ -1374,6 +1570,27 @@ func referencedDefinitionNames(root *tsType) map[string]bool {
 	}
 	visit(root)
 	return refs
+}
+
+func typeTextReferencesName(text, name string) bool {
+	for start := 0; ; {
+		i := strings.Index(text[start:], name)
+		if i < 0 {
+			return false
+		}
+		i += start
+		before := i == 0 || !isTypeIdentChar(text[i-1])
+		afterIndex := i + len(name)
+		after := afterIndex == len(text) || !isTypeIdentChar(text[afterIndex])
+		if before && after {
+			return true
+		}
+		start = i + len(name)
+	}
+}
+
+func isTypeIdentChar(ch byte) bool {
+	return ch == '_' || ch == '$' || ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z'
 }
 
 func schemaHasTypeof(t *tsType) bool {
@@ -1579,6 +1796,12 @@ func schemaMapToTSType(schema map[string]any) *tsType {
 		t.Annotations.Title == "" && t.Annotations.Comment == "" && t.Annotations.ID == "" &&
 		t.Annotations.Ref == "" && !t.Annotations.HasDefault {
 		t.Annotations = nil
+	}
+
+	if text, ok := schema["tsType"].(string); ok && isNativeObjectTypeText(text) {
+		t.Kind = tsTypePrimitive
+		t.DocTypeOverride = text
+		return t
 	}
 
 	// Check for $ref.

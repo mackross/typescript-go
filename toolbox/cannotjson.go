@@ -21,8 +21,17 @@ func cannotJSONType(t *tsType, defs map[string]*tsType, path string, optional bo
 	if t.IncludesUndefined && !optional {
 		reasons = append(reasons, cannotJSONReason(path, "uses undefined"))
 	}
-	if t.DocTypeOverride == "" {
-		if msg := cannotJSONKindReason(t.CannotJSONKind); msg != "" {
+	if inner := strings.TrimSuffix(t.DocTypeOverride, "[]"); inner != t.DocTypeOverride {
+		if msg := cannotJSONKindReason(nativeObjectCannotJSONKindFromText(inner)); msg != "" {
+			reasons = append(reasons, cannotJSONReason(path+"[]", msg))
+		}
+	}
+	if t.DocTypeOverride == "" || isNativeObjectTypeText(t.DocTypeOverride) {
+		kind := t.CannotJSONKind
+		if kind == cannotJSONNone && t.DocTypeOverride != "" {
+			kind = nativeObjectCannotJSONKindFromText(t.DocTypeOverride)
+		}
+		if msg := cannotJSONKindReason(kind); msg != "" {
 			reasons = append(reasons, cannotJSONReason(path, msg))
 		}
 	}
@@ -128,6 +137,61 @@ func cannotJSONKindReason(kind cannotJSONKind) string {
 	default:
 		return ""
 	}
+}
+
+// nativeGlobalTypeKinds is the single canonical table of native JS global
+// type names recognized by the toolbox, mapped to the cannotJSONKind they
+// produce when used in a schema. A value of cannotJSONNone means the name is
+// still a native global, but the type is JSON-serializable (e.g. Date, which
+// has toJSON). Add new native globals here; nativeObjectCannotJSONKindFromText,
+// isNativeObjectBaseName, and IsNativeGlobalTypeName all derive from this map.
+var nativeGlobalTypeKinds = map[string]cannotJSONKind{
+	"RegExp":            cannotJSONRegExp,
+	"Error":             cannotJSONError,
+	"Map":               cannotJSONMap,
+	"ReadonlyMap":       cannotJSONMap,
+	"Set":               cannotJSONSet,
+	"ReadonlySet":       cannotJSONSet,
+	"WeakMap":           cannotJSONWeakMap,
+	"WeakSet":           cannotJSONWeakSet,
+	"ArrayBuffer":       cannotJSONArrayBuffer,
+	"DataView":          cannotJSONDataView,
+	"Int8Array":         cannotJSONInt8Array,
+	"Uint8Array":        cannotJSONUint8Array,
+	"Uint8ClampedArray": cannotJSONUint8ClampedArray,
+	"Int16Array":        cannotJSONInt16Array,
+	"Uint16Array":       cannotJSONUint16Array,
+	"Int32Array":        cannotJSONInt32Array,
+	"Uint32Array":       cannotJSONUint32Array,
+	"Float32Array":      cannotJSONFloat32Array,
+	"Float64Array":      cannotJSONFloat64Array,
+	"BigInt64Array":     cannotJSONBigInt64Array,
+	"BigUint64Array":    cannotJSONBigUint64Array,
+	"Date":              cannotJSONNone,
+}
+
+// IsNativeGlobalTypeName reports whether name is a native JS global type
+// name recognized by the toolbox, including JSON-serializable globals such
+// as Date.
+func IsNativeGlobalTypeName(name string) bool {
+	_, ok := nativeGlobalTypeKinds[strings.TrimSpace(name)]
+	return ok
+}
+
+func nativeObjectCannotJSONKindFromText(text string) cannotJSONKind {
+	text = strings.TrimSpace(trimOuterParens(text))
+	if strings.HasSuffix(text, "[]") {
+		return cannotJSONNone
+	}
+	base := text
+	if idx := strings.IndexByte(base, '<'); idx >= 0 {
+		base = base[:idx]
+	}
+	parts := splitQualifiedName(strings.TrimSpace(base))
+	if len(parts) > 0 {
+		base = parts[len(parts)-1]
+	}
+	return nativeGlobalTypeKinds[base]
 }
 
 func cannotJSONReason(path, msg string) string {
